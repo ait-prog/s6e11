@@ -1,0 +1,116 @@
+[{"stream_name":"stdout","time":17.662195436,"data":"comp /kaggle/input/competitions/playground-series-s6e11 699960 299984\n"}
+,{"stream_name":"stdout","time":169.870723118,"data":"skip folds /kaggle/input/notebooks/mojjeed/s6e11-k9-gpt-2-storyteller-tpu/parts/gpt2tf FileNotFoundError(2, 'No such file or directory')\n"}
+,{"stream_name":"stdout","time":181.705532786,"data":"candidates 577 sources 44 split_bad {'rafanikitas/s6e11-fraud-from-auc-to-review-budgets'} 177s\n"}
+,{"stream_name":"stdout","time":196.665488824,"data":"pairs 154\n"}
+,{"stream_name":"stdout","time":297.319244819,"data":"raw members (699960, 154)\n"}
+,{"stream_name":"stdout","time":304.108804767,"data":"kept 151 300s\n"}
+,{"stream_name":"stdout","time":305.577468356,"data":"                                                                src                                 name       auc      fmin      fmax   test  split_ok        co        ct  keep\n"}
+,{"stream_name":"stdout","time":305.577508311,"data":"105   sameershaikh27/s6e11-fraud-wide-pooled-stack-every-bank-found                    oof:nested_winner  0.952551  0.948382  0.957325      F      True  0.988261  0.990429  True\n"}
+,{"stream_name":"stdout","time":305.577515239,"data":"150               sameershaikh27/s6e11-fraud-glm-boost-on-ten-folds                          oof:gb10_s0  0.951595  0.946805  0.956379  F+F+R      True  0.992764  0.994583  True\n"}
+,{"stream_name":"stdout","time":305.577521278,"data":"148               sameershaikh27/s6e11-fraud-glm-boost-on-ten-folds                          gb10_s0_oof  0.951595  0.946805  0.956379  F+F+R      True  0.992764  0.994583  True\n"}
+,{"stream_name":"stdout","time":305.577527455,"data":"152               sameershaikh27/s6e11-fraud-glm-boost-on-ten-folds                              oof:bag  0.951595  0.946680  0.956372    F+F      True  0.993130  0.994849  True\n"}
+,{"stream_name":"stdout","time":305.577533412,"data":"147               sameershaikh27/s6e11-fraud-glm-boost-on-ten-folds                         gb10_bag_oof  0.951595  0.946680  0.956372    F+R      True  0.993130  0.994849  True\n"}
+,{"stream_name":"stdout","time":305.577539336,"data":"151               sameershaikh27/s6e11-fraud-glm-boost-on-ten-folds                          oof:gb10_s1  0.951502  0.946450  0.956308  F+F+R      True  0.992717  0.994532  True\n"}
+,{"stream_name":"stdout","time":305.577545528,"data":"149               sameershaikh27/s6e11-fraud-glm-boost-on-ten-folds                          gb10_s1_oof  0.951502  0.946450  0.956308  F+F+R      True  0.992717  0.994532  True\n"}
+,{"stream_name":"stdout","time":305.577551294,"data":"0               megayak/s6e11-per-value-digit-te-shallow-tree-stack                        oof_glm_boost  0.951375  0.946710  0.956126  F+F+R      True  0.992437  0.993436  True\n"}
+,{"stream_name":"stdout","time":305.577557721,"data":"139    sameershaikh27/s6e11-fraud-glm-boost-seed-bag-and-full-refit                              oof:bag  0.951362  0.946516  0.956115    F+F      True  0.994849  0.995153  True\n"}
+,{"stream_name":"stdout","time":305.577563486,"data":"132    sameershaikh27/s6e11-fraud-glm-boost-seed-bag-and-full-refit                           gb_bag_oof  0.951362  0.946516  0.956115    F+R      True  0.994849  0.995153  True\n"}
+,{"stream_name":"stdout","time":305.577570569,"data":"135    sameershaikh27/s6e11-fraud-glm-boost-seed-bag-and-full-refit                            gb_s2_oof  0.951328  0.946522  0.956189  F+F+R      True  0.993954  0.994325  True\n"}
+,{"stream_name":"stdout","time":305.577576649,"data":"138    sameershaikh27/s6e11-fraud-glm-boost-seed-bag-and-full-refit                            oof:gb_s2  0.951328  0.946522  0.956189  F+F+R      True  0.993954  0.994325  True\n"}
+,{"stream_name":"stdout","time":305.577582769,"data":"3               megayak/s6e11-per-value-digit-te-shallow-tree-stack                    oof_glm_boost_xgb  0.951323  0.946623  0.956026  F+F+R      True  0.992635  0.993437  True\n"}
+,{"stream_name":"stdout","time":305.577606722,"data":"133    sameershaikh27/s6e11-fraud-glm-boost-seed-bag-and-full-refit                            gb_s0_oof  0.951285  0.946256  0.955949  F+F+R      True  0.994435  0.994778  True\n"}
+,{"stream_name":"stdout","time":305.577612741,"data":"136    sameershaikh27/s6e11-fraud-glm-boost-seed-bag-and-full-refit                            oof:gb_s0  0.951285  0.946256  0.955949  F+F+R      True  0.994435  0.994778  True\n"}
+,{"stream_name":"stdout","time":305.577617931,"data":"1               megayak/s6e11-per-value-digit-te-shallow-tree-stack                      oof_glm_boost_c  0.951260  0.946626  0.956001  F+F+R      True  0.990725  0.991857  True\n"}
+,{"stream_name":"stdout","time":305.577623186,"data":"137    sameershaikh27/s6e11-fraud-glm-boost-seed-bag-and-full-refit                            oof:gb_s1  0.951211  0.946533  0.955954  F+F+R      True  0.993891  0.994695  True\n"}
+,{"stream_name":"stdout","time":305.577628608,"data":"134    sameershaikh27/s6e11-fraud-glm-boost-seed-bag-and-full-refit                            gb_s1_oof  0.951211  0.946533  0.955954  F+F+R      True  0.993891  0.994695  True\n"}
+,{"stream_name":"stdout","time":305.577633731,"data":"2               megayak/s6e11-per-value-digit-te-shallow-tree-stack                    oof_glm_boost_raw  0.951150  0.946952  0.955826  F+F+R      True  0.989956  0.990910  True\n"}
+,{"stream_name":"stdout","time":305.577639286,"data":"81             yashteotia/s6e11-beginner-expert-every-step-measured                oof_predictions:blend  0.951102  0.945812  0.955893      F      True  0.998054  0.998634  True\n"}
+,{"stream_name":"stdout","time":305.577644019,"data":"80             yashteotia/s6e11-beginner-expert-every-step-measured         oof_predictions:glmboost_bag  0.951065  0.945961  0.955897      F      True  0.994905  0.995717  True\n"}
+,{"stream_name":"stdout","time":305.577648978,"data":"98       nirmalpatel02/glm-boost-digit-level-risk-residual-learning  s6e11_beyond_baseline/oof_glm_boost  0.951048  0.945946  0.955863    F+R      True  0.995145  0.995504  True\n"}
+,{"stream_name":"stdout","time":305.577654526,"data":"153  sameershaikh27/s6e11-fraud-the-playbook-10-notebooks-in-1-page                      oof:final_blend  0.950871  0.945218  0.955675      F      True  0.997665  0.998912  True\n"}
+,{"stream_name":"stdout","time":305.577659562,"data":"4               megayak/s6e11-per-value-digit-te-shallow-tree-stack                          oof_glm_cnt  0.950800  0.946296  0.955691  F+F+R      True  0.989393  0.990020  True\n"}
+,{"stream_name":"stdout","time":305.577664425,"data":"36           mdmuqtadirfuad/s6e11-9-full-refit-seed-bagged-lightgbm                  oof_lgb3_seltg_s100  0.950786  0.945561  0.955848    F+R      True  0.994337  0.995985  True\n"}
+,{"stream_name":"stdout","time":305.577669428,"data":"49        nilanjansaha123/96-key-digit-trie-gpt-2-full-refit-hybrid      preds/lgb_unified_96key_bag_oof  0.950757  0.945404  0.955645      R      True  0.996060  0.996393  True\n"}
+,{"stream_name":"stdout","time":305.577674682,"data":"52        nilanjansaha123/96-key-digit-trie-gpt-2-full-refit-hybrid      preds/xgb_unified_96key_bag_oof  0.950742  0.945468  0.955520      R      True  0.996384  0.996421  True\n"}
+,{"stream_name":"stdout","time":305.577679546,"data":"29         mdmuqtadirfuad/96-key-digit-trie-gpt-2-full-refit-hybrid      preds/xgb_unified_96key_bag_oof  0.950699  0.945441  0.955473      R      True  0.996249  0.996165  True\n"}
+,{"stream_name":"stdout","time":305.577684465,"data":"51        nilanjansaha123/96-key-digit-trie-gpt-2-full-refit-hybrid       preds/lgb_unified_s100_bag_oof  0.950697  0.945477  0.955493      R      True  0.994530  0.994805  True\n"}
+,{"stream_name":"stdout","time":305.577694612,"data":"6               megayak/s6e11-per-value-digit-te-shallow-tree-stack                         oof_lgb_te20  0.950695  0.945484  0.955539  F+F+R      True  0.994717  0.996337  True\n"}
+,{"stream_name":"stdout","time":305.577701693,"data":"129     sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured                         oof:b_seed_2  0.950674  0.945052  0.955538      F      True  0.993562  0.997999  True\n"}
+,{"stream_name":"stdout","time":305.577706849,"data":"131     sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured                         oof:b_seed_4  0.950672  0.945093  0.955494      F      True  0.993340  0.997938  True\n"}
+,{"stream_name":"stdout","time":305.577711911,"data":"28         mdmuqtadirfuad/96-key-digit-trie-gpt-2-full-refit-hybrid      preds/lgb_unified_96key_bag_oof  0.950658  0.945322  0.955388      R      True  0.995443  0.995903  True\n"}
+,{"stream_name":"stdout","time":305.577717861,"data":"127     sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured                        oof:b_seed_42  0.950643  0.944825  0.955579      F      True  0.993309  0.998046  True\n"}
+,{"stream_name":"stdout","time":305.577722755,"data":"126     sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured                           oof:fold10  0.950643  0.944825  0.955579      F      True  0.993309  0.998046  True\n"}
+,{"stream_name":"stdout","time":305.577728173,"data":"7               megayak/s6e11-per-value-digit-te-shallow-tree-stack                         oof_xgb_te20  0.950643  0.945359  0.955606  F+F+R      True  0.994353  0.996159  True\n"}
+,{"stream_name":"stdout","time":305.577733206,"data":"128     sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured                         oof:b_seed_1  0.950623  0.945033  0.955335      F      True  0.993296  0.998009  True\n"}
+,{"stream_name":"stdout","time":305.577738061,"data":"90      maverickss26/fraud-eda-gbdts-vs-ft-transformer-shap-fastapi                 exps/lgb_dig_bag/oof  0.950620  0.945076  0.955330      F      True  0.995831  0.997660  True\n"}
+,{"stream_name":"stdout","time":305.577743046,"data":"35           mdmuqtadirfuad/s6e11-9-full-refit-seed-bagged-lightgbm                     oof_lgb3_sel_s20  0.950609  0.945199  0.955674    F+R      True  0.995566  0.996824  True\n"}
+,{"stream_name":"stdout","time":305.577748129,"data":"130     sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured                         oof:b_seed_3  0.950588  0.945083  0.955347      F      True  0.993373  0.997945  True\n"}
+,{"stream_name":"stdout","time":305.577752908,"data":"93      maverickss26/fraud-eda-gbdts-vs-ft-transformer-shap-fastapi                 exps/xgb_dig_bag/oof  0.950562  0.945228  0.955285      F      True  0.996008  0.997656  True\n"}
+,{"stream_name":"stdout","time":305.577757976,"data":"101          sidhaarthshree/s6e11-100-self-trained-stack-lb-0-95154                      preds/lgb_k_oof  0.950556  0.945211  0.955388      R      True  0.996452  0.996740  True\n"}
+,{"stream_name":"stdout","time":305.577763026,"data":"102          sidhaarthshree/s6e11-100-self-trained-stack-lb-0-95154                 preds/lgb_k_s100_oof  0.950555  0.945248  0.955343      R      True  0.995413  0.995714  True\n"}
+,{"stream_name":"stdout","time":305.577767964,"data":"79             yashteotia/s6e11-beginner-expert-every-step-measured              oof_predictions:glm_bag  0.950554  0.945557  0.955576      F      True  0.992203  0.992735  True\n"}
+,{"stream_name":"stdout","time":305.577773049,"data":"89      maverickss26/fraud-eda-gbdts-vs-ft-transformer-shap-fastapi            exps/glmboost_lgb_bag/oof  0.950551  0.945536  0.955300      F      True  0.994534  0.995390  True\n"}
+,{"stream_name":"stdout","time":305.577778344,"data":"78             yashteotia/s6e11-beginner-expert-every-step-measured      oof_predictions:lgb4_digits_bag  0.950507  0.944770  0.955438      F      True  0.996572  0.998214  True\n"}
+,{"stream_name":"stdout","time":305.577787526,"data":"91      maverickss26/fraud-eda-gbdts-vs-ft-transformer-shap-fastapi                exps/lgb_dig_s100/oof  0.950487  0.945038  0.955100      F      True  0.993438  0.996665  True\n"}
+,{"stream_name":"stdout","time":305.577792441,"data":"32             mdmuqtadirfuad/s6e11-optuna-digit-encoding-selection                        oof_lgb3_dsel  0.950461  0.944752  0.955642      F      True  0.993860  0.996706  True\n"}
+,{"stream_name":"stdout","time":305.577797431,"data":"56          takayuki0127/s6e11-shallow-trees-value-te-digit-keys-gl          preds/S4_lgb3_te_digits_oof  0.950459  0.944694  0.955495    F+R      True  0.995557  0.997777  True\n"}
+,{"stream_name":"stdout","time":305.577802784,"data":"17                mdmuqtadirfuad/s6e11-v2-gpt2-token-keys-joint-glm                        oof_lgb3_s100  0.950446  0.945287  0.955433    F+R      True  0.993469  0.995846  True\n"}
+,{"stream_name":"stdout","time":305.577808013,"data":"65            masayakawamata/s6e11-single-xgb-te-features-cv-0-9504                                  oof  0.950440  0.945004  0.955129    F+F      True  0.993290  0.996499  True\n"}
+,{"stream_name":"stdout","time":305.577812731,"data":"64            masayakawamata/s6e11-single-xgb-te-features-cv-0-9504                                  oof  0.950440  0.945004  0.955129    F+F      True  0.993290  0.996499  True\n"}
+,{"stream_name":"stdout","time":305.577817642,"data":"63       masayakawamata/s6e11-xgboost-encoding-switchboard-cv-0-950                                  oof  0.950440  0.945004  0.955129    F+F      True  0.993290  0.996499  True\n"}
+,{"stream_name":"stdout","time":305.577822653,"data":"58          takayuki0127/s6e11-shallow-trees-value-te-digit-keys-gl              preds/S6_glm_te_s50_oof  0.950418  0.945245  0.955524    F+R      True  0.992641  0.993014  True\n"}
+,{"stream_name":"stdout","time":305.577827659,"data":"122     sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured                           oof:seed_1  0.950412  0.944628  0.955356      F      True  0.995648  0.998037  True\n"}
+,{"stream_name":"stdout","time":305.577832421,"data":"125     sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured                           oof:seed_4  0.950410  0.944685  0.955225      F      True  0.995737  0.997927  True\n"}
+,{"stream_name":"stdout","time":305.577837319,"data":"108        sameershaikh27/s6e11-fraud-realmlp-glm-stack-on-digit-te                       oof:xgb_dig_d2  0.950400  0.944625  0.955194      F      True  0.996000  0.998118  True\n"}
+,{"stream_name":"stdout","time":305.577842364,"data":"145      sameershaikh27/s6e11-fraud-digit-key-te-4-leaf-trees-blend                       oof:xgb_dig_d2  0.950400  0.944625  0.955194      F      True  0.996000  0.998118  True\n"}
+,{"stream_name":"stdout","time":305.577847119,"data":"104          sidhaarthshree/s6e11-100-self-trained-stack-lb-0-95154                      preds/xgb_k_oof  0.950393  0.944840  0.955330      R      True  0.995717  0.995475  True\n"}
+,{"stream_name":"stdout","time":305.577851821,"data":"45        mdmuqtadirfuad/s6e11-10-full-refit-lightgbm-and-glm-views                     oof_lgb4_ext_s20  0.950392  0.944786  0.955414    F+R      True  0.995988  0.997398  True\n"}
+,{"stream_name":"stdout","time":305.582082707,"data":"src\n"}
+,{"stream_name":"stdout","time":305.582117392,"data":"sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured       11\n"}
+,{"stream_name":"stdout","time":305.582122985,"data":"maverickss26/fraud-eda-gbdts-vs-ft-transformer-shap-fastapi        9\n"}
+,{"stream_name":"stdout","time":305.582127585,"data":"yashteotia/s6e11-beginner-expert-every-step-measured               9\n"}
+,{"stream_name":"stdout","time":305.582145907,"data":"megayak/s6e11-per-value-digit-te-shallow-tree-stack                8\n"}
+,{"stream_name":"stdout","time":305.582150672,"data":"sameershaikh27/s6e11-fraud-glm-boost-seed-bag-and-full-refit       8\n"}
+,{"stream_name":"stdout","time":305.582155172,"data":"masayakawamata/s6e11-target-encoding-0-007-lr-0-0015-xgb           7\n"}
+,{"stream_name":"stdout","time":305.582159311,"data":"sameershaikh27/s6e11-fraud-realmlp-glm-stack-on-digit-te           7\n"}
+,{"stream_name":"stdout","time":305.58216396,"data":"mdmuqtadirfuad/s6e11-digit-keys-value-te-shallow-gbdt-glm          6\n"}
+,{"stream_name":"stdout","time":305.582168177,"data":"sameershaikh27/s6e11-fraud-digit-sequence-cnn-member               6\n"}
+,{"stream_name":"stdout","time":305.58217253,"data":"sameershaikh27/s6e11-fraud-glm-boost-on-ten-folds                  6\n"}
+,{"stream_name":"stdout","time":305.582176937,"data":"takayuki0127/s6e11-shallow-trees-value-te-digit-keys-gl            6\n"}
+,{"stream_name":"stdout","time":305.582181304,"data":"sidhaarthshree/s6e11-100-self-trained-stack-lb-0-95154             6\n"}
+,{"stream_name":"stdout","time":305.582185575,"data":"mdmuqtadirfuad/s6e11-v2-gpt2-token-keys-joint-glm                  6\n"}
+,{"stream_name":"stdout","time":305.58218983,"data":"mdmuqtadirfuad/s6e11-gbdt-trio-original-data                       6\n"}
+,{"stream_name":"stdout","time":305.582204488,"data":"nilanjansaha123/96-key-digit-trie-gpt-2-full-refit-hybrid          5\n"}
+,{"stream_name":"stdout","time":305.582209168,"data":"mdmuqtadirfuad/s6e11-optuna-digit-encoding-selection               5\n"}
+,{"stream_name":"stdout","time":305.582213503,"data":"sameershaikh27/s6e11-fraud-digit-key-te-4-leaf-trees-blend         4\n"}
+,{"stream_name":"stdout","time":305.582217597,"data":"mdmuqtadirfuad/s6e11-optuna-feature-selection                      4\n"}
+,{"stream_name":"stdout","time":305.58222217,"data":"mdmuqtadirfuad/s6e11-10-full-refit-lightgbm-and-glm-views          3\n"}
+,{"stream_name":"stdout","time":305.582226535,"data":"mdmuqtadirfuad/96-key-digit-trie-gpt-2-full-refit-hybrid           3\n"}
+,{"stream_name":"stdout","time":305.582230801,"data":"mdmuqtadirfuad/s6e11-v3-bilstm-mlp-over-encoded-keys               2\n"}
+,{"stream_name":"stdout","time":305.582234997,"data":"mdmuqtadirfuad/s6e11-9-full-refit-seed-bagged-lightgbm             2\n"}
+,{"stream_name":"stdout","time":305.582239378,"data":"masayakawamata/s6e11-single-xgb-te-features-cv-0-9504              2\n"}
+,{"stream_name":"stdout","time":305.582243935,"data":"masayakawamata/s6e11-single-logreg-te-features-cv-0-9502           2\n"}
+,{"stream_name":"stdout","time":305.582248649,"data":"sameershaikh27/s6e11-fraud-does-the-original-20k-help-measured     2\n"}
+,{"stream_name":"stdout","time":305.582252925,"data":"rafanikitas/s6e11-fraud-from-auc-to-review-budgets                 2\n"}
+,{"stream_name":"stdout","time":305.582257635,"data":"masayakawamata/s6e11-xgboost-encoding-switchboard-cv-0-950         1\n"}
+,{"stream_name":"stdout","time":305.582262095,"data":"ravi20076/playgrounds6e11-public-baseline-v1                       1\n"}
+,{"stream_name":"stdout","time":305.582266352,"data":"mdmuqtadirfuad/s6e11-bilstm-feature-tokens-optuna                  1\n"}
+,{"stream_name":"stdout","time":305.582272042,"data":"mikhailnaumov/credit-card-fraud-xgb                                1\n"}
+,{"stream_name":"stdout","time":305.582276507,"data":"mojjeed/gpt-2-storyteller-on-a-tpu-v5e-8                           1\n"}
+,{"stream_name":"stdout","time":305.582280965,"data":"nirmalpatel02/glm-boost-digit-level-risk-residual-learning         1\n"}
+,{"stream_name":"stdout","time":305.582285833,"data":"sameershaikh27/s6e11-fraud-wide-pooled-stack-every-bank-found      1\n"}
+,{"stream_name":"stdout","time":305.582293877,"data":"sameershaikh27/s6e11-fraud-the-playbook-10-notebooks-in-1-page     1\n"}
+,{"stream_name":"stdout","time":305.582298256,"data":"sameershaikh27/s6e11-fraud-target-encoding-3-ways-1-honest         1\n"}
+,{"stream_name":"stdout","time":305.582302868,"data":"yekenot/ps-s6-e11-realmlp-pytabkit                                 1\n"}
+,{"stream_name":"stdout","time":305.582307512,"data":"yekenot/ps-s6-e11-realmlp-pytorch                                  1\n"}
+,{"stream_name":"stdout","time":305.582311958,"data":"yekenot/ps-s6-e11-tabm-pytabkit                                    1\n"}
+,{"stream_name":"stdout","time":305.582316321,"data":"zhenruiweng/s6e11-85-features-realmlp-for-fraud-prediction         1\n"}
+,{"stream_name":"stdout","time":305.582320978,"data":"zhenruiweng/s6e11-realmlp-for-fraud-prediction                     1\n"}
+,{"stream_name":"stdout","time":305.582325552,"data":"done 301s\n"}
+,{"stream_name":"stderr","time":309.485437419,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":309.485473675,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":309.885329357,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":309.885359658,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":311.77016601,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":313.211603758,"data":"[NbConvertApp] Writing 344660 bytes to __results__.html\n"}
+]

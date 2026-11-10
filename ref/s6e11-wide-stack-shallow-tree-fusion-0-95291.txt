@@ -1,0 +1,80 @@
+## MD: # S6E11 | Wide LM Stack + Part 9 + Shallow-Tree | LB 0.95300
+
+**Our earlier versions** (all in the version history): v11 0.95291 (old wide stack + 20% shallow-tree, above every public notebook at the time), v10 0.95288, v9 GLM-Boost + Residual MLP Pool 0.95239.
+
+This version scores **0.95300** on the public LB, level with the best public notebooks. It rebuilds our blend on the new Part 12 wide stack and re-checks every weight on the public LB and in cross-validation.
+
+## What it does
+
+1. **Backbone (0.95300).** goodpjw2008 rebuilt his wide stack with a second language-model member (Part 12, `wide_lm_stack_test.npy`; nested OOF AUC 0.952565 against 0.952504 for the old wide stack). It is mixed with his frozen Part 9 predictions as 65/35 logit ranks, the Fraud Signal Lab recipe by Malyshev Danil. This backbone alone scores 0.95300.
+2. **Shallow-tree member at 10%.** megayak Per-Value + Digit TE Shallow-Tree Stack, also as logit ranks.
+3. The mixture is ranked once more and written to `submission.csv`. Both goodpjw2008 arrays are checked against SHA-256 hashes, and the code warns if the megayak file has changed since this version was scored.
+
+## How the weights were chosen
+
+Eight public-LB probes on the same day, all as logit ranks:
+
+| Blend | Public LB |
+|---|---|
+| backbone: 65/35 wide LM stack + Part 9 | 0.95300 |
+| **backbone + shallow-tree 10% (this notebook)** | **0.95300** |
+| backbone + shallow-tree 15% / 20% | 0.95299 / 0.95297 |
+| backbone + Sovereign Fusion (amanatar)
+## CODE:
+from pathlib import Path
+import hashlib
+import numpy as np
+import pandas as pd
+from scipy.stats import rankdata
+from scipy.special import logit
+
+# Frozen goodpjw2008 arrays (checked by SHA-256) and the megayak shallow-tree submission
+HASHES = {
+    'wide_lm_stack_test.npy': 'b37471e6c34a50715284e807d68e15e5f3ad033e72400904f27876b24041f8cc',
+    'part9_test.npy': 'e899205391b8755e82a2ae6b06fb1e026ef29132e4bcdbfad96535d7f5608abd',
+}
+SHALLOW_SHA = '96abe3b112cdf794c56f4bbd8f7a70f5b5ebffd1c7be3436f636c59fb581c1a7'
+
+inputs = Path('/kaggle/input')
+
+def locate(name):
+    paths = list(inputs.rglob(name))
+    assert len(paths) == 1, (name, paths)
+    return paths[0]
+
+def sha(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+def logit_rank(v):
+    return logit((rankdata(v) - 0.5) / len(v))
+
+sample = pd.read_csv(locate('sample_submission.csv'))
+arr = {}
+for name, expected in HASHES.items():
+    path = locate(name)
+    assert sha(path) == expected, name
+    arr[name] = np.load(path, allow_pickle=False).ravel()
+
+shallow_path = locate('submission.csv')
+if sha(shallow_path) != SHALLOW_SHA:
+    print('WARNING: the megayak shallow-tree submission has changed since this version was scored')
+shallow = pd.read_csv(shallow_path)
+assert (shallow['id'].values == sample['id'].values).all()
+
+# Step 1: the 0.95300 backbone, 65/35 logit ranks of the wide LM stack (Part 12) and Part 9
+backbone = 0.65 * logit_rank(arr['wide_lm_stack_test.npy']) + 0.35 * logit_rank(arr['part9_test.npy'])
+# Step 2: mix in the shallow-tree stack at 10%, also as logit ranks
+score = 0.90 * logit_rank(backbone) + 0.10 * logit_rank(shallow['is_fraud'].values)
+
+submission = sample[['id']].copy()
+submission['is_fraud'] = (rankdata(score) - 0.5) / len(score)
+submission.to_csv('/kaggle/working/submission.csv', index=False)
+print(submission.shape)
+print('SHA256', sha(Path('/kaggle/working/submission.csv')))
+
+## CODE:
+import pandas as pd
+sub = pd.read_csv('/kaggle/working/submission.csv')
+print(sub.shape)
+print(sub.head())
+print(sub['is_fraud'].describe())

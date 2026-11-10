@@ -1,0 +1,25 @@
+{
+  "id": "areebbb/s6e11-wide-stack-shallow-tree-fusion-0-95291",
+  "id_no": 142681545,
+  "title": "S6E11 | Wide Stack + Shallow-Tree Fusion | 0.95291",
+  "code_file": "s6e11-wide-stack-shallow-tree-fusion-0-95291.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [],
+  "dataset_sources": [
+    "goodpjw2008/s6e11-fraud-series-artifacts"
+  ],
+  "kernel_sources": [
+    "megayak/s6e11-per-value-digit-te-shallow-tree-stack"
+  ],
+  "competition_sources": [
+    "playground-series-s6e11"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:17b2fc7f27c25c6c2fd4230ec8e66097ab2b89fc88e1e4d6f338b72e1ee0bc3e",
+  "machine_shape": "None"
+}

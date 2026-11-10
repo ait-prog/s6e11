@@ -1,0 +1,47 @@
+{
+  "id": "alexchilton/credit-card-fraud-lb-0-9524-shallow-tree-stack",
+  "id_no": 142021372,
+  "title": "Credit Card Fraud | LB 0.9524 | Shallow-Tree Stack",
+  "code_file": "credit-card-fraud-lb-0-9524-shallow-tree-stack.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [
+    "ensembling",
+    "exploratory data analysis",
+    "gpu"
+  ],
+  "dataset_sources": [
+    "uditjain13/credit-card-fraud-detection-2026",
+    "queyrusi/fraud-shared-digit-cnn-weights",
+    "sadamtorres/ps-s6e11-tabpfn-gbdt-oof-test-pairs",
+    "alexchilton/s6e11-frozen-public-banks",
+    "masayakawamata/s6e11-gpt2-target-first-oof",
+    "alexchilton/s6e11-oof-predictions",
+    "goodpjw2008/s6e11-oof-bank",
+    "malyshevdanil/s6e11-pooled-stack-v9",
+    "masayakawamata/s6e11-public-stack-v10-outputs",
+    "masayakawamata/s6e11-tabpack-cpu-starter-predictions",
+    "megayak/s6e11-target-first-lm",
+    "wguesdon/s6e11-tree-ensemble-predictions"
+  ],
+  "kernel_sources": [
+    "ektarr/lb-0-95121-realmlp-stacking",
+    "yekenot/ps-s6-e11-realmlp-pytabkit",
+    "lazyyeou/s6e11-digit-trie-te-joint-glm-nested-stack",
+    "nilanjansaha123/96-key-digit-trie-gpt-2-full-refit-hybrid",
+    "sameershaikh27/s6e11-fraud-glm-boost-on-ten-folds",
+    "sameershaikh27/s6e11-fraud-digit-sequence-cnn-member",
+    "goodpjw2008/s6e11-part-12-wide-stack-2nd-lm-lb-0-95298",
+    "megayak/s6e11-per-value-digit-te-shallow-tree-stack"
+  ],
+  "competition_sources": [
+    "playground-series-s6e11"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-private-byod/python@sha256:9a6bcfda6d03b2cd9aa347ee8c1bae62043328ed0f4afe9bda014e4f8bbf9435",
+  "machine_shape": "NvidiaTeslaT4"
+}

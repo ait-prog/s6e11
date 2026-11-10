@@ -1,0 +1,27 @@
+{
+  "id": "nilanjansaha123/96-key-digit-trie-gpt-2-full-refit-hybrid",
+  "id_no": 142254742,
+  "title": "96-Key Digit-Trie + GPT-2  | Full-Refit+Hybrid",
+  "code_file": "96-key-digit-trie-gpt-2-full-refit-hybrid.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [
+    "gpu"
+  ],
+  "dataset_sources": [
+    "uditjain13/credit-card-fraud-detection-2026",
+    "malyshevdanil/s6e11-digit-token-full-refit-artifacts",
+    "goodpjw2008/s6e11-fraud-series-artifacts"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [
+    "playground-series-s6e11"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-private-byod/python@sha256:9a6bcfda6d03b2cd9aa347ee8c1bae62043328ed0f4afe9bda014e4f8bbf9435",
+  "machine_shape": "NvidiaTeslaT4"
+}

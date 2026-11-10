@@ -1,0 +1,773 @@
+## MD: # S6E11 | Fast Per-Value + Digit Encodings | Shallow-Tree Stack
+
+**5-fold CV see section 4 (nested) · runs on Kaggle's CPU in about 2.5 hours**
+
+A complete, forkable pipeline for Playground S6E11. Every tree and GLM member trains here on CPU; the one language model was trained on my own laptop GPU, and its script and predictions are in the attached dataset.
+
+> **This notebook grows.** Each version adds one measured idea on the same folds; the newest is described first.
+
+| version | what changed | 5-fold CV (nested) | public LB |
+|---|---|---|---|
+| v1 | per-value + digit encodings, five members, hill climbing | 0.95082 | 0.95086 |
+| v2 | + GPT-2 token keys; four members, rank mean | 0.95101 | 0.95102 |
+| v3 | how the rows were made (label first, T≈0.7); GLM with token rates shared across fields | 0.95107 | 0.95104 |
+| v4 | joint keys where the label is not additive; every member refitted on all rows for the test | 0.95110 | 0.95145 |
+| v5 | boosting from the GLM: trees that start at the additive model and fit only its residual | 0.95126 | 0.95162 |
+| v6 | two more views boosted from the GLM: with the joint keys, and from the raw view | 0.95131 | 0.95173 |
+| v7 | every tree member also sees how many rows share each key's value | 0.95143 | 0.95178 |
+| v8 | a second GLM that knows the counts, and boosters started from it | 0.95152 | 0.95160 |
+| v9 | + my own language model on the rows, one fold model so far (section 4b) | 0.95152 before the language model, which has fold 0 only 
+## CODE:
+import os, glob, time, warnings
+import numpy as np
+import pandas as pd
+import lightgbm as lgb
+import xgboost as xgb
+from scipy.stats import rankdata
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import StandardScaler
+warnings.filterwarnings("ignore")
+
+INPUT = os.environ.get("INPUT_DIR", "/kaggle/input")
+OUT = os.environ.get("OUT_DIR", "/kaggle/working")
+NJOBS = int(os.environ.get("NJOBS", os.cpu_count()))
+T0 = time.time()
+
+
+def log(*a):
+    print(f"[{time.time() - T0:6.0f}s]", *a, flush=True)
+
+
+def find(name):
+    hits = sorted(glob.glob(os.path.join(INPUT, "**", name), recursive=True))
+    if not hits:
+        raise FileNotFoundError(name)
+    return hits[0]
+
+
+TARGET = "is_fraud"
+CATS = ["merchant_category", "card_type", "auth_method", "channel", "device_type"]
+FLAGS = ["is_foreign_transaction", "is_new_merchant", "used_vpn",
+         "ip_country_mismatch", "billing_shipping_mismatch", "is_ai_generated_scam_attempt"]
+NUMS = ["amount_usd", "hours_since_last_txn", "txn_count_last_24h", "distance_from_home_km",
+        "card_age_months", "customer_age", "account_balance_usd", "cvv_retry_count",
+        "velocity_score", "time_of_day_hour", "day_of_week", "merchant_risk_score", "prior_disputes"]
+FEATS = NUMS + FLAGS + CATS
+FLOATS = ["amount_usd", "hours_since_last_txn", "distance_from_home_km", "account_balance_usd",
+          "velocity_score", "merchant_risk_score"]
+
+tr = pd.read_csv(find("train.csv"))
+te = pd.read_csv(find("test.csv"))
+for df in (tr, te):
+    df[FLAGS] = df[FLAGS].astype("int8")
+y = tr[TARGET].astype(int).values
+NTR, NTE = len(tr), len(te)
+full = pd.concat([tr[FEATS], te[FEATS]], ignore_index=True)
+FOLDS = list(StratifiedKFold(5, shuffle=True, random_state=42).split(np.zeros(NTR), y))
+OOF, PRED = {}, {}
+log(f"train {tr.shape}, test {te.shape}, fraud rate {y.mean():.4%}, {NJOBS} threads")
+## MD: ## 0. How the rows were made: the label first, then the fields at temperature 0.7
+
+Two hypotheses for how a synthetic row got its label:
+
+* **formula** — the generator wrote the fields and the label followed the source's rule, so a value's fraud rate in the
+  competition should match its fraud rate in the original 20k rows;
+* **label first** — the generator drew `is_fraud` first (at the source's 1.7% rate) and then wrote every field
+  *given the label*, sampling at temperature T. Then a value's competition fraud rate follows from Bayes' rule with
+  the original's class-conditional distributions sharpened by 1/T:
+  `rate(v) = π·P₁(v)^(1/T)/Z₁ / (π·P₁(v)^(1/T)/Z₁ + (1−π)·P₀(v)^(1/T)/Z₀)`.
+
+The table below scores both hypotheses (n-weighted RMSE of the logit fraud rate per value). Label-first at T = 0.7
+cuts the error 2–5× on all six flags, `auth_method`, `cvv_retry_count` and `prior_disputes`, whose best-fitting T
+is 0.65–0.75 — the temperature GReaT-style samplers use. The fraud rate itself is not sharpened (1.670% vs 1.695% in
+the original), because the label was the first thing drawn. `merchant_category` and `txn_count_last_24h` sit
+between the two; five columns (`card_type`, `channel`, `device_type`, hour, weekday) come out flat (best T 1.3):
+the generator did not learn them, though they keep a weak signal.
+
+**What this means for modelling:** every field — and every *token* of every number — was written conditionally on
+the label. That is why each distinct value and each di
+## CODE:
+og = pd.read_csv(find("credit_card_fraud_2026.csv"))
+og[FLAGS] = og[FLAGS].astype("int8")
+yo, pi = og[TARGET].astype(int).values, y.mean()
+
+
+def label_first_rate(c, T, a=0.5):
+    vals = sorted(set(og[c]) | set(tr[c]))
+    p = []
+    for k in (1, 0):
+        n = og.loc[yo == k, c].value_counts().reindex(vals, fill_value=0) + a
+        q = (n / n.sum()) ** (1 / T)
+        p.append(q / q.sum())
+    return pi * p[0] / (pi * p[0] + (1 - pi) * p[1])
+
+
+def lgt(p):
+    p = np.clip(p, 1e-4, 1 - 1e-4)
+    return np.log(p / (1 - p))
+
+
+rows = []
+for c in FLAGS + CATS + ["cvv_retry_count", "prior_disputes", "txn_count_last_24h", "time_of_day_hour", "day_of_week"]:
+    obs = pd.Series(y).groupby(tr[c].values).agg(["mean", "size"])
+    w = obs["size"] / obs["size"].sum()
+    err = lambda p: np.sqrt(np.sum(w * (lgt(obs["mean"]) - lgt(p.reindex(obs.index))) ** 2))
+    ogr = pd.Series(yo).groupby(og[c].values).agg(["sum", "size"])
+    formula = (ogr["sum"] + pi * 5) / (ogr["size"] + 5)
+    Ts = np.arange(0.3, 1.31, 0.05)
+    errs = [err(label_first_rate(c, T)) for T in Ts]
+    rows.append(dict(column=c, values=len(obs), err_formula=err(formula.reindex(obs.index).fillna(pi)),
+                     err_label_first_T07=err(label_first_rate(c, 0.7)), best_T=Ts[int(np.argmin(errs))]))
+display(pd.DataFrame(rows).set_index("column").round(3))
+
+c = "cvv_retry_count"
+display(pd.DataFrame({"original rate": pd.Series(yo).groupby(og[c].values).mean(),
+                      "label first, T=0.7": label_first_rate(c, 0.7),
+                      "competition rate": pd.Series(y).groupby(tr[c].values).mean(),
+                      "competition rows": pd.Series(y).groupby(tr[c].values).size()}).round(4))
+## MD: ## 1. Keys: every value, and the digits it was written with
+
+Each key below is treated as a category and replaced by its out-of-fold fraud rate.
+
+| key | example for `1371.37` | what it groups |
+|---|---|---|
+| `v_` | 1371.37 | the exact value (all 24 columns) |
+| `cents_` | 37 | the two decimals |
+| `int_` | 1371 | the integer part |
+| `ten_` | 137 | the integer part without its last digit |
+| `dec_` | 13713 | the value cut to one decimal |
+| `l1_`, `l2_` | 41, 413 | length of the integer part + its first one / two digits |
+| `t1_`, `t2_`, `tl_`, `tn_` | ` 13`, `71`, `37`, 4 | GPT-2 tokens of the number as written: first, second, last, count |
+| `j_` | (`grocery`, 4.5) | 8 joint keys, GLM only of field pairs whose label effect is **not additive** (section 1b) |
+
+The digit keys follow goodpjw2008's *Digits Leak the Label* (Part 3), the leading-digit keys follow areebbb's
+digit-trie, and the GPT-2 token keys follow bulsahkecici. The tokens are read from the CSV text itself
+(`dtype=str`), so `0.8` and `0.80` stay what the file says. On a 4-leaf LightGBM the token keys moved the 5-fold
+OOF AUC from 0.95040 to 0.95051 (better on 4 of 5 folds); they need the internet to fetch the GPT-2 vocabulary,
+and the notebook falls back to the other keys without it.
+## CODE:
+def key_table(df):
+    K = {}
+    for c in FEATS:
+        K[f"v_{c}"] = df[c].astype(str).values if c in CATS else df[c].values
+    for c in FLOATS:
+        x = df[c].values
+        K[f"cents_{c}"] = (np.round(x * 100) % 100).astype(np.int64)
+        K[f"int_{c}"] = np.floor(x).astype(np.int64)
+        K[f"ten_{c}"] = np.floor(x / 10).astype(np.int64)
+        K[f"dec_{c}"] = np.floor(x * 10 + 1e-6).astype(np.int64)
+    for c in FLOATS:
+        i = pd.Series(np.floor(df[c].values).astype(np.int64)).astype(str)
+        K[f"l1_{c}"] = (i.str.len() * 10 + i.str[0].astype(int)).values
+        K[f"l2_{c}"] = (i.str.len() * 100 + i.str[:2].astype(int)).values
+    return K
+
+
+STR, TOK = None, None     # the floats as written, and their GPT-2 tokens (kept for section 3)
+
+
+def token_keys():
+    global STR, TOK
+    try:
+        from tokenizers import Tokenizer
+        gpt2 = Tokenizer.from_pretrained("gpt2")
+    except Exception as e:
+        log(f"GPT-2 tokenizer unavailable ({type(e).__name__}), token keys skipped")
+        return {}
+    STR = pd.concat([pd.read_csv(find("train.csv"), usecols=FLOATS, dtype=str),
+                     pd.read_csv(find("test.csv"), usecols=FLOATS, dtype=str)], ignore_index=True)
+    TOK, K = {}, {}
+    for c in FLOATS:
+        p = TOK[c] = STR[c].map({v: gpt2.encode(" " + v).tokens for v in STR[c].unique()})
+        K[f"t1_{c}"] = p.str[0].values
+        K[f"t2_{c}"] = p.map(lambda t: t[1] if len(t) > 1 else "").values
+        K[f"tl_{c}"] = p.str[-1].values
+        K[f"tn_{c}"] = p.str.len().values
+    return K
+
+
+KEYS = key_table(full)
+KEYS.update(token_keys())
+KNAMES = list(KEYS)
+codes = [pd.factorize(pd.Series(KEYS[n]))[0].astype(np.int32) for n in KNAMES]
+KMAT = np.column_stack(codes)
+NCAT = np.array([c.max() + 1 for c in codes])
+del KEYS, codes
+
+# raw view: the 24 columns as numbers (categoricals as codes) plus the cents of each float
+RAW = full[NUMS + FLAGS].copy()
+for c in CATS:
+    RAW[c] = pd.factorize(full[c], sort=True)[0].astype(np.int16)
+for c in FLOATS:
+    RAW[f"cents_{c}"] = (np.round(full[c].values * 100) % 100).astype(np.int16)
+RAWV = RAW.values.astype(np.float32)
+CAT_IDX = [list(RAW.columns).index(c) for c in CATS]
+log(f"{len(KNAMES)} target-encoded keys, {RAW.shape[1]} raw columns")
+pd.DataFrame({"key": KNAMES, "distinct values": NCAT}).set_index("key").T
+## MD: ## 1b. Joint keys: where the label is not additive
+
+Per-value encodings are additive in the logit: each field adds its own pull. Section 0 says why that is close to
+right — every field was written given the label — but the generator also learned how the source's columns hang
+together, and some source columns look *derived* from others: a merchant's risk score from its category, a
+velocity score from the transaction count, an IP mismatch from a foreign transaction. Then what carries the
+label is a value *relative to* the other field (a high risk score for a low-risk category), which no per-field
+encoding can see.
+
+To find where, every pair of the 24 columns (floats cut to deciles) was scored offline on the same 5 folds: a
+logistic regression on the two per-value encodings, with and without the encoding of the pair, compared by
+held-out deviance (276 pairs × 10 fits; too slow for 4 cores, so it is not repeated here). 13 pairs lower the
+deviance by more than 10; the strongest by far are **`merchant_category` × `merchant_risk_score`** (308),
+**foreign × IP mismatch** (129) and **`merchant_category` × amount** (86). Pairs with `prior_disputes`, which a
+first scan ranked high, came out at zero once the regressions were run to convergence (the first solver had
+stopped early on the two-column fits) — a reminder to check every scan twice.
+
+The second check is the cell below, in sample: `G` is the likelihood-ratio statistic of the observed fraud rate
+per cell against the additive predi
+## CODE:
+# the 13 pairs from the offline scan; "q:" = deciles of a float (category x risk was scanned with risk deciles and
+# is keyed on the exact score, which the G check below and the GLM both prefer)
+JOINT = [("j_category_risk", ("merchant_category", "merchant_risk_score")),
+         ("j_foreign_ip", ("is_foreign_transaction", "ip_country_mismatch")),
+         ("j_category_amount", ("merchant_category", "q:amount_usd")),
+         ("j_txn_velocity", ("txn_count_last_24h", "q:velocity_score")),
+         ("j_category_age", ("merchant_category", "customer_age")),
+         ("j_amount_risk", ("q:amount_usd", "q:merchant_risk_score")),
+         ("j_hours_velocity", ("q:hours_since_last_txn", "q:velocity_score")),
+         ("j_age_risk", ("customer_age", "q:merchant_risk_score")),
+         ("j_newmerchant_weekday", ("is_new_merchant", "day_of_week")),
+         ("j_scam_velocity", ("is_ai_generated_scam_attempt", "q:velocity_score")),
+         ("j_age_cardage", ("customer_age", "card_age_months")),
+         ("j_hour_weekday", ("time_of_day_hour", "day_of_week")),
+         ("j_txn_age", ("txn_count_last_24h", "customer_age"))]
+
+
+def joint_col(df, c):
+    return pd.qcut(df[c[2:]], 10, labels=False, duplicates="drop") if c.startswith("q:") else df[c]
+
+
+def joint_code(df, cols):
+    k = np.zeros(len(df), np.int64)
+    for c in cols:
+        u = pd.factorize(joint_col(df, c))[0]
+        k = k * (u.max() + 1) + u
+    return pd.factorize(k)[0]
+
+
+lgt1 = lambda p: np.log(np.clip(p, 1e-6, 1 - 1e-6) / (1 - np.clip(p, 1e-6, 1 - 1e-6)))
+rows, JCODES = [], {}
+for name, cols in JOINT:
+    JCODES[name] = joint_code(full, cols).astype(np.int32)
+    k = JCODES[name][:NTR]
+    add = np.full(NTR, -(len(cols) - 1) * lgt1(y.mean()))
+    dof = 0
+    for c in cols:
+        u = pd.factorize(joint_col(full, c))[0][:NTR]
+        add += lgt1(np.bincount(u, weights=y) / np.bincount(u))[u]
+        dof += u.max()
+    s, n = np.bincount(k, weights=y), np.bincount(k)
+    r = np.bincount(k, weights=1 / (1 + np.exp(-add))) / n
+    with np.errstate(divide="ignore", invalid="ignore"):
+        g = np.where(s > 0, s * np.log(s / (n * r)), 0) + np.where(n > s, (n - s) * np.log((n - s) / (n * (1 - r))), 0)
+    rows.append(dict(key=name, cells=(n > 0).sum(), G=2 * g.sum(), df=(n > 0).sum() - 1 - dof))
+GT = pd.DataFrame(rows).set_index("key")
+GT["kept"] = GT["G"] > 1.2 * GT["df"]
+display(GT.round(1))
+USED = list(GT.index[GT["kept"]])
+NBASE = KMAT.shape[1]          # the trees use the first NBASE keys, the GLM all of them (section 3)
+KMAT = np.column_stack([KMAT] + [JCODES[n] for n in USED])
+NCAT = np.append(NCAT, [JCODES[n].max() + 1 for n in USED])
+KNAMES += USED
+log(f"{len(USED)} joint keys kept -> {len(KNAMES)} target-encoded keys")
+
+tab = pd.DataFrame({"foreign": tr["is_foreign_transaction"].values, "ip mismatch": tr["ip_country_mismatch"].values,
+                    "y": y})
+obs = tab.groupby(["foreign", "ip mismatch"])["y"].agg(["mean", "size"])
+ra, rb = tab.groupby("foreign")["y"].mean(), tab.groupby("ip mismatch")["y"].mean()
+obs["additive"] = [1 / (1 + np.exp(-(lgt1(ra[i]) + lgt1(rb[j]) - lgt1(y.mean())))) for i, j in obs.index]
+display(obs.round(4))
+## MD: ## 2. Out-of-fold target encoding in milliseconds
+
+The encodings are computed with `np.bincount` on integer codes instead of a pandas `groupby` per key, so encoding
+all 92 keys for one outer fold (with a 5-fold inner split for the training rows) takes a few seconds.
+
+* training rows of the outer fold: encoded by an **inner** 5-fold split, so no row sees its own label;
+* validation rows and test rows: encoded from the whole training part of the fold;
+* smoothing toward the fold's fraud rate with weight `smooth` (unseen values get the prior).
+## CODE:
+def te_rate(k, t, ncat, prior, smooth):
+    s = np.bincount(k, weights=t, minlength=ncat)
+    n = np.bincount(k, minlength=ncat)
+    return (s + prior * smooth) / (n + smooth)
+
+
+def te_fold(a, b, smooth=20.0, inner=5, seed=0):
+    ya = y[a].astype(np.float64)
+    Ka, Kb, Kt = KMAT[a], KMAT[b], KMAT[NTR:]
+    Ea = np.zeros(Ka.shape, np.float32)
+    Eb = np.zeros(Kb.shape, np.float32)
+    Et = np.zeros(Kt.shape, np.float32)
+    inner_f = list(StratifiedKFold(inner, shuffle=True, random_state=seed).split(np.zeros(len(a)), ya))
+    for j in range(KMAT.shape[1]):
+        for i, o in inner_f:
+            Ea[o, j] = te_rate(Ka[i, j], ya[i], NCAT[j], ya[i].mean(), smooth)[Ka[o, j]]
+        r = te_rate(Ka[:, j], ya, NCAT[j], ya.mean(), smooth)
+        Eb[:, j], Et[:, j] = r[Kb[:, j]], r[Kt[:, j]]
+    return Ea, Eb, Et
+
+
+t = time.time()
+_ = te_fold(*FOLDS[0])
+log(f"one outer fold encoded in {time.time() - t:.1f}s")
+## MD: ## 3. Members
+
+All members use the same `StratifiedKFold(5, shuffle=True, random_state=42)` split, so their out-of-fold predictions
+line up row by row.
+
+| member | model | inputs |
+|---|---|---|
+| `lgb_te20` | LightGBM, 4 leaves | raw view + encodings (smoothing 20) + **value count of every key** |
+| `xgb_te20` | XGBoost, depth 2 | raw view + encodings (smoothing 20) + value count of every key |
+| `glm_cnt` | logistic regression | logits of the encodings **and the joint keys** + token rates shared across fields + flags + one-hot categoricals + **log value counts** |
+| `glm_boost` | LightGBM, 4 leaves, **started from the GLM's logit** | raw view + encodings + joint keys + value counts; trees fit the GLM's residual |
+| `glm_boost_xgb` | XGBoost, depth 2, started from the GLM's logit | same |
+| `glm_boost_c` | LightGBM, 4 leaves, started from `glm_cnt`'s logit | same |
+| `glm_boost_raw` | LightGBM, 4 leaves, started from `glm_cnt`'s logit | raw view + value counts only |
+| `lgb_raw` | LightGBM, 4 leaves | raw view only + value counts |
+
+Shallow trees: with per-value encodings the signal is close to additive, and 4-leaf trees beat deeper ones
+(goodpjw2008 measured 2…63 leaves; 4 is best). The joint keys of section 1b go into the **GLM only**. The GLM is additive, so the pairs give it something it
+could not express: 0.95029 → 0.95047 on its own, and the blend rises on **all five folds**. The trees build
+interactions themselves; given the joint encodings as well they got worse (Lig
+## CODE:
+LGB = dict(n_estimators=20000, learning_rate=0.03, num_leaves=4, min_child_samples=100, subsample=0.8,
+           subsample_freq=1, colsample_bytree=0.5, reg_lambda=1.0, max_bin=255, verbose=-1)
+XGB = dict(n_estimators=20000, learning_rate=0.03, max_depth=2, subsample=0.8, colsample_bytree=0.5,
+           min_child_weight=5, reg_lambda=1.0, max_bin=256, tree_method="hist", eval_metric="auc",
+           early_stopping_rounds=300)
+ENC_CACHE = {}
+ALL = (np.arange(NTR), np.arange(0))      # the refit "fold": every training row, nothing held out
+FOLDAVG, REFIT = {}, {}
+
+
+def encodings(f, smooth):
+    if (f, smooth) not in ENC_CACHE:
+        ENC_CACHE[(f, smooth)] = te_fold(*(ALL if f == "all" else FOLDS[f]), smooth=smooth)
+    return ENC_CACHE[(f, smooth)]
+
+
+def fit_tree(kind, Xa, ya, Xb, yb, seed=42):
+    if kind == "lgb":
+        m = lgb.LGBMClassifier(**LGB, n_jobs=NJOBS, random_state=seed)
+        m.fit(Xa, ya, eval_set=[(Xb, yb)], eval_metric="auc", categorical_feature=CAT_IDX,
+              callbacks=[lgb.early_stopping(300, verbose=False)])
+        return m, m.best_iteration_
+    m = xgb.XGBClassifier(**XGB, n_jobs=NJOBS, random_state=seed)
+    m.fit(Xa, ya, eval_set=[(Xb, yb)], verbose=False)
+    return m, m.best_iteration
+
+
+def refit_tree(kind, Xa, ya, n_trees, seed=42):
+    if kind == "lgb":
+        m = lgb.LGBMClassifier(**{**LGB, "n_estimators": n_trees}, n_jobs=NJOBS, random_state=seed)
+        return m.fit(Xa, ya, categorical_feature=CAT_IDX)
+    P = {k: v for k, v in XGB.items() if k != "early_stopping_rounds"}
+    return xgb.XGBClassifier(**{**P, "n_estimators": n_trees}, n_jobs=NJOBS, random_state=seed).fit(Xa, ya)
+
+
+def finish(name, oof, foldavg, refit):
+    OOF[name], FOLDAVG[name], REFIT[name] = oof, foldavg, refit
+    PRED[name] = (rankdata(foldavg) + rankdata(refit)) / (2 * NTE)
+    log(f"==> {name}: OOF AUC {roc_auc_score(y, oof):.6f} | test: fold average vs refit, "
+        f"spearman {pd.Series(foldavg).corr(pd.Series(refit), method='spearman'):.4f}")
+
+
+def run_member(name, kind, smooth=None, extra=None):
+    oof, pred, its, test = np.zeros(NTR), np.zeros(NTE), [], np.arange(NTR, NTR + NTE)
+    frame = lambda idx: [RAWV[idx]] + ([extra[idx]] if extra is not None else [])
+    for f, (a, b) in enumerate(FOLDS):
+        parts_a, parts_b, parts_t = frame(a), frame(b), frame(test)
+        if smooth is not None:
+            Ea, Eb, Et = encodings(f, smooth)
+            parts_a.append(Ea[:, :NBASE]); parts_b.append(Eb[:, :NBASE]); parts_t.append(Et[:, :NBASE])
+        Xa, Xb, Xt = np.hstack(parts_a), np.hstack(parts_b), np.hstack(parts_t)
+        m, it = fit_tree(kind, Xa, y[a], Xb, y[b])
+        its.append(it)
+        oof[b] = m.predict_proba(Xb)[:, 1]
+        pred += m.predict_proba(Xt)[:, 1] / len(FOLDS)
+        log(f"{name} fold {f}: AUC {roc_auc_score(y[b], oof[b]):.5f} ({it} trees)")
+    # refit on every training row: 25% more rows than a fold, so 1.25x the folds' mean number of trees
+    parts_a, parts_t = frame(np.arange(NTR)), frame(test)
+    if smooth is not None:
+        Ea, _, Et = encodings("all", smooth)
+        parts_a.append(Ea[:, :NBASE]); parts_t.append(Et[:, :NBASE])
+    n = int(round(np.mean(its) * 1.25))
+    m = refit_tree(kind, np.hstack(parts_a), y, n)
+    log(f"{name} refit on all {NTR} rows with {n} trees")
+    finish(name, oof, pred, m.predict_proba(np.hstack(parts_t))[:, 1])
+
+
+# how many rows (train + test) share each key's value: how far each encoding can be trusted
+KCNT = np.column_stack([np.bincount(KMAT[:, j])[KMAT[:, j]] for j in range(KMAT.shape[1])]).astype(np.float32)
+run_member("lgb_te20", "lgb", smooth=20.0, extra=KCNT[:, :NBASE])
+## CODE:
+run_member("xgb_te20", "xgb", smooth=20.0, extra=KCNT[:, :NBASE])
+## MD: ### A GLM on the encodings, with token rates shared across fields
+
+A logistic regression sees the same encodings as logits — a different model family, so its errors differ from the
+trees'. It gets one more input that follows from section 0: **one language model wrote every field, with one set of
+token embeddings**, so the label's pull on a decimal token such as `"35"` is partly the same in `amount_usd`,
+`hours_since_last_txn`, `distance_from_home_km` and `account_balance_usd` (the first-decimal effects correlate
+0.68–0.91 across those columns). Per field, a two-digit decimal token is a noisy estimate; pooled over fields it is not.
+
+* **pooled token rate** — the fraud rate of a decimal token over all fields of its group (the four 2-decimal floats;
+  the two 1-decimal scores), and of the last integer token for the scores;
+* **field rate shrunk toward the pooled rate** (weight 2000) instead of toward the global prior;
+* **within-field Markov key** — (last integer token, decimals) of each 2-decimal float, shrunk toward the field rate.
+
+All of it is fitted inside each fold exactly like the other encodings. Swapping this GLM in for the plain one raised
+the blend on **all five folds** (+0.00012, +0.00001, +0.00004, +0.00005, +0.00008). Without the tokenizer the cell
+falls back to the plain GLM.
+## CODE:
+def logit(p):
+    p = np.clip(p, 1e-6, 1 - 1e-6)
+    return np.log(p / (1 - p))
+
+
+POOL2 = ["amount_usd", "hours_since_last_txn", "distance_from_home_km", "account_balance_usd"]
+POOL1 = ["velocity_score", "merchant_risk_score"]
+GEN = TOK is not None
+if GEN:
+    dec = lambda c: STR[c].str.split(".").str[1].astype(str)
+    lit = lambda c: TOK[c].map(lambda t: t[t.index(".") - 1] if "." in t else t[-1])
+    GROUPS = []
+    for mem, fn in [(POOL2, dec), (POOL2, lambda c: dec(c).str[0]), (POOL1, dec), (POOL1, lit)]:
+        v = pd.concat([fn(c) for c in mem], ignore_index=True)
+        GROUPS.append(pd.factorize(v)[0].astype(np.int32).reshape(len(mem), -1).T.copy())
+    MARKOV = [pd.factorize(lit(c) + "|" + dec(c))[0].astype(np.int32) for c in POOL2]
+
+
+def gen_encode(i, o, m0=50.0, m1=2000.0, m2=200.0):
+    yi = y[i].astype(np.float64)
+    prior, cols, field0 = yi.mean(), [], []
+    for g, C in enumerate(GROUPS):
+        ncat = int(C.max()) + 1
+        s = [np.bincount(C[i, j], weights=yi, minlength=ncat) for j in range(C.shape[1])]
+        n = [np.bincount(C[i, j], minlength=ncat) for j in range(C.shape[1])]
+        pool = (sum(s) + prior * m0) / (sum(n) + m0)
+        for j in range(C.shape[1]):
+            h = ((s[j] + m1 * pool) / (n[j] + m1))[C[o, j]]
+            cols.append(h)
+            if g == 0:
+                field0.append(h)
+    for j, M in enumerate(MARKOV):
+        ncat = int(M.max()) + 1
+        s, n = np.bincount(M[i], weights=yi, minlength=ncat), np.bincount(M[i], minlength=ncat)
+        cols.append((s[M[o]] + m2 * field0[j]) / (n[M[o]] + m2))
+    return np.column_stack(cols).astype(np.float32)
+
+
+def gen_fold(a, b, inner=5, seed=0):
+    Ga = None
+    for i, o in StratifiedKFold(inner, shuffle=True, random_state=seed).split(np.zeros(len(a)), y[a]):
+        E = gen_encode(a[i], a[o])
+        Ga = np.zeros((len(a), E.shape[1]), np.float32) if Ga is None else Ga
+        Ga[o] = E
+    E = gen_encode(a, np.concatenate([b, np.arange(NTR, NTR + NTE)]))
+    return Ga, E[:len(b)], E[len(b):]
+
+
+ONEHOT = pd.get_dummies(full[CATS].astype(str), dtype=np.float32).values
+BASE = np.hstack([full[FLAGS].values.astype(np.float32), ONEHOT])
+LOGC = np.log1p(KCNT)
+BASEC = np.hstack([BASE, (LOGC - LOGC.mean(0)) / (LOGC.std(0) + 1e-6)])
+GLM_NAME = "glm_gen" if GEN else "glm_te20"
+GLMS = {GLM_NAME: BASE, "glm_cnt": BASEC}
+GLMZ = {n: {} for n in GLMS}    # per fold: each GLM's logit on the fold's training, held-out and test rows
+oof = {n: np.zeros(NTR) for n in GLMS}
+pred = {n: np.zeros(NTE) for n in GLMS}
+refit = {}
+for f, (a, b) in list(enumerate(FOLDS)) + [("all", ALL)]:
+    Ea, Eb, Et = encodings(f, 20.0)
+    if GEN:
+        Ga, Gb, Gt = gen_fold(a, b)
+        Ea, Eb, Et = np.hstack([Ea, Ga]), np.hstack([Eb, Gb]), np.hstack([Et, Gt])
+    sc = StandardScaler().fit(logit(Ea))
+    Za, Zt = sc.transform(logit(Ea)), sc.transform(logit(Et))
+    Zb = sc.transform(logit(Eb)) if len(b) else None
+    for n, B in GLMS.items():
+        Xa, Xt = np.hstack([Za, B[a]]), np.hstack([Zt, B[NTR:]])
+        m = LogisticRegression(C=0.3, max_iter=200, tol=1e-7, solver="newton-cholesky").fit(Xa, y[a])
+        if f == "all":
+            refit[n] = m.decision_function(Xt)
+            GLMZ[n][f] = (m.decision_function(Xa), None, refit[n])
+            log(f"{n} refit on all {NTR} rows")
+            continue
+        oof[n][b] = m.decision_function(np.hstack([Zb, B[b]]))
+        GLMZ[n][f] = (m.decision_function(Xa), oof[n][b], m.decision_function(Xt))
+        pred[n] += GLMZ[n][f][2] / len(FOLDS)
+        log(f"{n} fold {f}: AUC {roc_auc_score(y[b], oof[n][b]):.5f}")
+log(f"{GLM_NAME}: OOF AUC {roc_auc_score(y, oof[GLM_NAME]):.6f} (the boosters' starting point, not blended)")
+finish("glm_cnt", oof["glm_cnt"], pred["glm_cnt"], refit["glm_cnt"])
+## MD: ### Boosting from the GLM: additive first, trees for the rest
+
+Sections 0 and 1b give the shape of the signal: **mostly additive** (every field written given the label, each value
+with its own pull) **plus a few interactions**. The GLM gets the additive part right but cannot bend; a tree
+ensemble can bend but spends most of its trees re-learning the additive part from scratch, one split at a time.
+
+So these two members start where the GLM ends: a 4-leaf LightGBM (`init_score`) and a depth-2 XGBoost
+(`base_margin`) whose starting score is the GLM's logit for each row, so their trees only fit **what the
+additive model misses**. Inside each fold the GLM is the one fitted on that fold's training rows (its encodings
+are out of fold, so its logits there are honest), and the held-out and test rows start from that same GLM. The
+refit does the same on all rows.
+
+Measured on the same folds, this is the best single model of the notebook — the LightGBM version scores 0.95104
+out of fold, above every other member and level with v3's whole blend — and the boosted GLM improves on the GLM
+on all five folds. Both versions together lifted the rank-mean blend from 0.95110 to 0.95126 in v5 (better on 4
+of 5 folds). Three leaves instead of four: 0.95098, so four stay.
+
+**v6 adds two views to it.** (1) The LightGBM booster now also sees the joint keys of section 1b: as plain trees
+they were noise (0.95051 → 0.95020), but on top of the GLM they help, 0.95104 → **0.95111**. (2) A third booster
+sees 
+## CODE:
+def boost_fit(kind, Xa, ya, za, n_trees=None, Xb=None, yb=None, zb=None):
+    # trees starting from the GLM's logit: LightGBM's init_score, XGBoost's base_margin
+    if kind == "lgb":
+        m = lgb.LGBMClassifier(**{**LGB, "learning_rate": 0.02, **({"n_estimators": n_trees} if n_trees else {})},
+                               n_jobs=NJOBS, random_state=42)
+        if n_trees:
+            return m.fit(Xa, ya, init_score=za, categorical_feature=CAT_IDX), n_trees
+        m.fit(Xa, ya, init_score=za, eval_set=[(Xb, yb)], eval_init_score=[zb], eval_metric="auc",
+              categorical_feature=CAT_IDX, callbacks=[lgb.early_stopping(300, verbose=False)])
+        return m, m.best_iteration_
+    P = {**XGB, "learning_rate": 0.02}
+    if n_trees:
+        P = {k: v for k, v in P.items() if k != "early_stopping_rounds"}
+        return xgb.XGBClassifier(**{**P, "n_estimators": n_trees}, n_jobs=NJOBS, random_state=42).fit(
+            Xa, ya, base_margin=za), n_trees
+    m = xgb.XGBClassifier(**P, n_jobs=NJOBS, random_state=42)
+    m.fit(Xa, ya, base_margin=za, eval_set=[(Xb, yb)], base_margin_eval_set=[zb], verbose=False)
+    return m, m.best_iteration + 1
+
+
+def boost_margin(m, X, z, it=None):
+    # LightGBM predicts with the early-stopped best iteration; XGBoost is told the range explicitly
+    if isinstance(m, lgb.LGBMClassifier):
+        return z + m.predict(X, raw_score=True)
+    return m.predict(X, base_margin=z, output_margin=True, iteration_range=(0, it) if it else None)
+
+
+CNT = np.column_stack([full[c].map(full[c].value_counts()).values for c in NUMS]).astype(np.float32)
+
+
+def boost_view(view, idx, E):
+    # what the boosting trees see: all encodings (joint keys included) with every key's value count, or the raw
+    # view with the value counts of the numbers
+    if view == "raw":
+        return np.hstack([RAWV[idx], CNT[idx], KCNT[idx]])
+    return np.hstack([RAWV[idx], E, KCNT[idx]])
+
+
+def boost_from_glm(name, kind, view="joint", glm=GLM_NAME):
+    oof, pred, its, test = np.zeros(NTR), np.zeros(NTE), [], np.arange(NTR, NTR + NTE)
+    for f, (a, b) in enumerate(FOLDS):
+        Ea, Eb, Et = encodings(f, 20.0)
+        za, zb, zt = GLMZ[glm][f]
+        Xa, Xb, Xt = (boost_view(view, i, E) for i, E in ((a, Ea), (b, Eb), (test, Et)))
+        m, it = boost_fit(kind, Xa, y[a], za, Xb=Xb, yb=y[b], zb=zb)
+        its.append(it)
+        oof[b] = boost_margin(m, Xb, zb, it)
+        pred += boost_margin(m, Xt, zt, it) / len(FOLDS)
+        log(f"{name} fold {f}: GLM {roc_auc_score(y[b], zb):.5f} -> boosted {roc_auc_score(y[b], oof[b]):.5f} "
+            f"({it} trees)")
+    Ea, _, Et = encodings("all", 20.0)
+    za, _, zt = GLMZ[glm]["all"]
+    n = int(round(np.mean(its) * 1.25))
+    m, _ = boost_fit(kind, boost_view(view, np.arange(NTR), Ea), y, za, n_trees=n)
+    log(f"{name} refit on all {NTR} rows with {n} trees")
+    finish(name, oof, pred, boost_margin(m, boost_view(view, test, Et), zt))
+
+
+boost_from_glm("glm_boost", "lgb", view="joint")
+## CODE:
+boost_from_glm("glm_boost_xgb", "xgb", view="joint")
+## CODE:
+boost_from_glm("glm_boost_raw", "lgb", view="raw", glm="glm_cnt")
+## CODE:
+boost_from_glm("glm_boost_c", "lgb", glm="glm_cnt")
+## MD: ### A raw view
+
+The same 4-leaf LightGBM without any encoding, plus how often each number occurs in train + test. It is weaker
+on its own but looks at the data differently from every encoded member.
+## CODE:
+run_member("lgb_raw", "lgb", smooth=None, extra=CNT)
+## MD: ## 4. Blend
+
+AUC only depends on the order of the predictions, so every member becomes a rank in [0, 1]. Three combiners are
+compared **out of fold** (fitted on four folds of the OOF matrix, scored on the fifth):
+
+* `mean` — the plain rank average (nothing to fit);
+* `hill` — greedy rank hill climbing with replacement (Caruana ensemble selection);
+* `stack` — logistic regression on the members' rank-logits.
+
+**v10: four members, hill climbing.** Until v9 the blend took every member and the best combiner out of fold. At v8 that
+stopped matching the public score: the rank mean of eight members is better out of fold (0.95152 against 0.95143) but
+worse on the public board (0.95160 against 0.95178), and the order holds with the language model too (0.95213 against
+0.95226). Hill climbing in v7 gave all its weight to four members, most of it to `glm_boost`, so the blend now uses
+those four, and hill climbing is refitted on all OOF rows and applied to the test predictions. The other members still
+train and their predictions are saved.
+
+This is a choice made on the public rows. The gaps are close to the noise between near-identical submissions (sd about
+0.00011), and on these four members `stack` is slightly ahead of `hill` out of fold (0.95146 against 0.95144).
+## CODE:
+NAMES = ["lgb_te20", "glm_boost", "glm_boost_xgb", "lgb_raw"]       # what hill climbing kept in v7
+R = np.column_stack([rankdata(OOF[n]) / NTR for n in NAMES])
+Rt = np.column_stack([rankdata(PRED[n]) / NTE for n in NAMES])
+summary = pd.DataFrame({"OOF AUC": [roc_auc_score(y, OOF[n]) for n in NAMES]}, index=NAMES)
+
+
+def hill_climb(Rm, yy, iters=100):
+    w = np.zeros(Rm.shape[1]); cur = np.zeros(len(yy)); best = 0.0
+    for _ in range(iters):
+        sc = [roc_auc_score(yy, cur + Rm[:, j]) for j in range(Rm.shape[1])]
+        j = int(np.argmax(sc))
+        if sc[j] <= best + 1e-7:
+            break
+        best, cur, w[j] = sc[j], cur + Rm[:, j], w[j] + 1
+    return w / w.sum()
+
+
+def rlogit(r):
+    return logit(np.clip(r, 1e-6, 1 - 1e-6))
+
+
+nested = {"mean": R.mean(1), "hill": np.zeros(NTR), "stack": np.zeros(NTR)}
+for a, b in FOLDS:
+    nested["hill"][b] = R[b] @ hill_climb(R[a], y[a])
+    nested["stack"][b] = LogisticRegression(C=1.0, max_iter=2000).fit(rlogit(R[a]), y[a]).decision_function(rlogit(R[b]))
+blend_cv = {k: roc_auc_score(y, v) for k, v in nested.items()}
+log("nested blend AUC:", {k: round(v, 6) for k, v in blend_cv.items()})
+
+w = hill_climb(R, y)
+st = LogisticRegression(C=1.0, max_iter=2000).fit(rlogit(R), y)
+summary["hill weight"] = w
+summary["stack coef"] = st.coef_[0]
+final = {"mean": Rt.mean(1), "hill": Rt @ w, "stack": st.decision_function(rlogit(Rt))}
+best = "hill"                                    # the blend with the measured public score, see the note above
+log(f"chosen: {best} (nested OOF AUC {blend_cv[best]:.6f})")
+summary.round(5)
+## CODE:
+corr = pd.DataFrame({n: OOF[n] for n in NAMES}).corr(method="spearman")
+corr.round(4)
+## MD: ## 4b. A language model on the rows
+
+The trees and GLMs read each field separately. A language model reads the whole row, the way the generator wrote it, so it adds
+what they miss. I trained one on my own laptop GPU (an RTX 4060) and attach its predictions here:
+[S6E11 target-first LM predictions](https://www.kaggle.com/datasets/megayak/s6e11-target-first-lm), with the training script
+`lm_member.py`. It uses no public predictions.
+
+**How it works.** This is the target-first recipe of Chris Deotte (S6E10 1st place), with settings from
+[masayakawamata's public S6E11 write-up](https://www.kaggle.com/code/masayakawamata/s6e11-gpt-2-target-first-classifier-cv-0-9500).
+GPT-2 small is fine-tuned on the original 20,000 rows, then on a fold's rows with the label written first and the columns in a fresh
+random order at every step. Each held-out row is then scored twice, once under each label, and Bayes' rule turns the two
+log-likelihoods into log-odds, averaged over column orders.
+
+**What is different here: a compact row.** As plain text a row is 224 tokens, but only about 40 of them are values, and only 1,372 of
+GPT-2's 50,257 tokens ever appear. So each column is one learned token, and the softmax covers only the tokens in use. The same model
+then trains about 3 times faster and scores about 4 times faster, which puts one fold at about 4 hours on a laptop GPU.
+It costs nothing here: five folds score 0.95043 out of fold, against 0.95003 in the public write-up, and on fold 0 my plain-t
+## CODE:
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import KFold
+
+lm_oof = np.load(find("lm_oof.npy")).astype(float)
+lm_test = np.load(find("lm_test.npy")).astype(float)
+seen = np.isfinite(lm_oof)                       # rows of the folds finished so far
+ys = y[seen]
+rb = rankdata(nested[best][seen]) / seen.sum()
+rm = rankdata(lm_oof[seen]) / seen.sum()
+GRID = np.round(np.arange(0, 0.55, 0.05), 2)
+
+
+def best_weight(i, rl):
+    return GRID[int(np.argmax([roc_auc_score(ys[i], (1 - g) * rb[i] + g * rl[i]) for g in GRID]))]
+
+
+def nested_weight(rl):
+    out = np.zeros(len(ys))                      # the weight is chosen on four fifths, scored on the fifth
+    for a, b in StratifiedKFold(5, shuffle=True, random_state=1).split(rb, ys):
+        g = best_weight(a, rl)
+        out[b] = (1 - g) * rb[b] + g * rl[b]
+    return roc_auc_score(ys, out), best_weight(np.arange(len(ys)), rl)
+
+
+def row_fields(path):
+    # every column as a number (categoricals as codes) and the digits each float was written with, read as text
+    s = pd.read_csv(path, dtype=str, keep_default_na=False).drop(columns=["id", TARGET], errors="ignore")
+    F = {}
+    for c in s.columns:
+        try:
+            F[c] = s[c].astype(float).values
+        except ValueError:
+            F[c] = pd.factorize(s[c])[0].astype(float)
+            continue
+        if s[c].str.contains(r"\.").any():
+            dec, ip = s[c].str.split(".", n=1, expand=True)[1].fillna(""), s[c].str.split(".", n=1).str[0]
+            F[c + "|dlen"] = dec.str.len().values
+            F[c + "|d1"] = pd.to_numeric(dec.str[:1], errors="coerce").values
+            F[c + "|d2"] = pd.to_numeric(dec.str[1:2], errors="coerce").values
+            F[c + "|ilen"] = ip.str.len().values
+            F[c + "|lead"] = pd.to_numeric(ip.str[:1], errors="coerce").values
+            F[c + "|ilast"] = pd.to_numeric(ip.str[-1:], errors="coerce").values
+    return pd.DataFrame(F)
+
+
+def purify(lm, base_rank, X):
+    # remove the part of the LM's disagreement with the blend that the row's own fields explain; no labels are used.
+    # Measured in v13 and not used for the submission (see the note above).
+    zb = rlogit(base_rank)
+    X = X.assign(base=zb)
+    res = lm - LinearRegression().fit(zb[:, None], lm).predict(zb[:, None])
+    P = dict(objective="regression", learning_rate=0.05, num_leaves=31, min_data_in_leaf=100, feature_fraction=0.5,
+             verbose=-1, n_jobs=NJOBS, seed=1)
+    clean = np.zeros(len(lm))
+    for a, b in KFold(5, shuffle=True, random_state=0).split(X):
+        m = lgb.train(P, lgb.Dataset(X.iloc[a], res[a]), 400, valid_sets=[lgb.Dataset(X.iloc[b], res[b])],
+                      callbacks=[lgb.early_stopping(30, verbose=False)])
+        clean[b] = m.predict(X.iloc[b])
+    return lm - clean, 1 - ((res - clean) ** 2).sum() / ((res - res.mean()) ** 2).sum()
+
+
+W_LM = 0.4                                       # set from the public score, see the table above
+cv_plain, w_plain = nested_weight(rm)
+log(f"language model on {seen.sum()} rows: alone {roc_auc_score(ys, rm):.6f}, blend {roc_auc_score(ys, rb):.6f} "
+    f"-> {cv_plain:.6f} (nested), weight {w_plain}; at {W_LM}: {roc_auc_score(ys, (1 - W_LM) * rb + W_LM * rm):.6f}")
+assert seen.all(), "purification needs the language model on every fold"
+# inside each outer fold only: every score there comes from models that never saw a label of that fold, like the test rows.
+# Fitted across folds, the regression reads scores from models trained on this row's label and the gain looks 3x larger.
+XTR = row_fields(find("train.csv"))
+pure_oof, r2 = np.zeros(NTR), []
+for _, o in FOLDS:
+    pure_oof[o], r2o = purify(lm_oof[o], rankdata(nested[best][o]) / len(o), XTR.iloc[o].reset_index(drop=True))
+    r2.append(round(float(r2o), 3))
+rp = rankdata(pure_oof) / NTR
+cv_pure, w_pure = nested_weight(rp)
+log(f"purified inside each fold (row fields explain R2 {r2} of the disagreement): {cv_pure:.6f} (nested), weight {w_pure}; "
+    f"at {W_LM}: {roc_auc_score(ys, (1 - W_LM) * rb + W_LM * rp):.6f}")
+# measured only: the purified mix scored 0.95198 on the public board against 0.95217 for the plain one, so the plain one ships
+final_lm = (1 - W_LM) * rankdata(final[best]) / NTE + W_LM * rankdata(lm_test) / NTE
+## MD: ## 5. Submission and files
+
+`submission.csv` is the chosen blend with the language model. Every member's predictions are saved next to it, rows in the original
+`train.csv` / `test.csv` order, folds = `StratifiedKFold(5, shuffle=True, random_state=42)`, so you can stack
+them in your own notebook: `oof_<member>.npy` (out of fold), `test_<member>.npy` (rank mean of fold average and
+refit, what the blend uses), `foldavg_<member>.npy` and `refit_<member>.npy` (the two parts).
+## CODE:
+sub = pd.DataFrame({"id": te["id"], TARGET: rankdata(final_lm) / NTE})
+sub.to_csv(os.path.join(OUT, "submission.csv"), index=False)
+for n in OOF:
+    for kind, arr in (("oof", OOF), ("test", PRED), ("foldavg", FOLDAVG), ("refit", REFIT)):
+        np.save(os.path.join(OUT, f"{kind}_{n}.npy"), arr[n].astype(np.float32))
+log(f"submission.csv written ({len(sub)} rows), total time {time.time() - T0:.0f}s")
+sub.head()

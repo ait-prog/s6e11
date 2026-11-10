@@ -1,0 +1,96 @@
+alexchilton/credit-card-fraud-lb-0-9524-shallow-tree-stack :: oof_00107284da228571.npy oof_0958aef8e20ba93c.npy oof_10bad431843b4481.npy oof_15d0d127372ea048.npy oof_21b4d1316c55b429.npy oof_278d2f3f2c3631c2.npy oof_29b8383a5886512b.npy oof_30a64e99a4f93aee.npy oof_37984c74f5880f09.npy oof_4188470eded4cdec.npy oof_41998f38c106cf45.npy oof_42eb4cf755012e69.npy oof_47ec80c2946cc751.npy oof_4c8630e2039cb81a.npy oof_5160560b658e88f4.npy oof_5546bd639f98c251.npy oof_55b2e2d2f9b615b9.npy oof_581c04132b5940af.npy oof_59abebeed6b8fa2d.npy oof_74dcf78882edd49f.npy oof_750a3a13593f5e05.npy oof_772ddea4c3876dec.npy oof_82e9a79659bdf9d8.npy oof_888d3d64c3854ba8.npy oof_91652b3e9b245296.npy oof_983fbb55a2b59a74.npy oof_989e37e5bd1f1063.npy oof_9b95a64105ce0e91.npy oof_9d26cfb564230caa.npy oof_a9fffc89ca5f057f.npy oof_b890168ab4ab0fdc.npy oof_d5bd0671dd68108f.npy oof_ddfa69a32874765c.npy oof_e0749b53ac73f63d.npy oof_e0f351ee76b3a71e.npy oof_e13d1e5d005b82ad.npy oof_ff71516344a5cf6a.npy oof_manifest.json oof_spline_glm_88df84742d.npy 
+aphoristicartist/s6e11-fraud-digit-keys-stack-lb-0-95096 :: oof_predictions.parquet 
+aqibrazadev/playground-s6e11-eda-ensemble-blend-leaderboard :: cat_d3__f5s42n699960o0_oof.npy lgb_deep__f5s42n699960o0_oof.npy lgb_gam__f5s42n699960o0_oof.npy logreg_splines__f5s42n699960o0_oof.npy realmlp__f5s42n699960o0_oof.npy tabm__f5s42n699960o0_oof.npy xgb_d2__f5s42n699960o0_oof.npy 
+arizalfirdaus123/s6e11-digit-keys-target-encoding-open-oof :: oof_cat_te.npy oof_ebm_raw.npy oof_lgb_full.npy oof_lgb_te100.npy oof_mlp_te.npy oof_realmlp_te.npy oof_spline_glm.npy oof_xgb_d1_full.npy oof_xgb_d2_te20.npy oof_predictions.csv.gz 
+bawanthabeliwaththa/fraud-auc-hackathon :: oof_23473a389ec90746.npy oof_34b52fbbdc088ce0.npy oof_3a629cc7b6c4c95e.npy oof_3e7b6f163b1416af.npy oof_4f8b2de9c9ff667d.npy oof_806f7cf9eff53179.npy oof_94a4777277ce5476.npy oof_b5efb28f219e9e50.npy oof_c94069c35713de72.npy oof_eb1d0af753eda8e6.npy oof_f8576ae9be769a19.npy oof_manifest.json oof_spline_glm_88df84742d.npy 
+bhuvannr2006/s6e11-who-got-scammed-by-ai :: oof_lgbm.csv 
+bnzn261029/s6e11-pt1-eda-synthetic-forensics-baselines :: oof_lgb_raw.npy oof_lr.npy 
+bnzn261029/s6e11-pt2-gpu-gbdts-nested-target-encoding :: oof_cat_raw.npy oof_glm_te.npy oof_lgb_te.npy oof_xgb_glm.npy oof_xgb_te.npy 
+chovyxu/graphsage-for-fraud-detection-a-visual-guide :: 12_oof_roc_pr.png 12_oof_roc_pr.svg 14_oof_score_distributions.png 14_oof_score_distributions.svg oof_predictions.csv 
+chovyxu/pca-fraud-insights :: oof_predictions.csv 
+dariushafshar/s6e11-pipeline-test-your-feature-lb-0-94801 :: oof.csv 
+denpugovkin/s6e11-5-reviews-73-fraud-oof :: checkpoint_oof.parquet oof.parquet 
+denpugovkin/s6e11-logreg-baseline :: oof.parquet 
+denpugovkin/s6e11-train-verify-submit :: checkpoint_oof.parquet oof.parquet 
+dhananjayk2609/s6e11-fraud-part-2-digits-leak-the-label :: 13_lgb_digit_oof.npy 13_xgb_digit_oof.npy 
+dhananjayk2609/s6e11-fraud-part-3-glm-and-boosted-trees :: 14_glm_boost_oof.npy 14_glm_oof.npy 
+dhananjayk2609/s6e11-fraud-part-4-final-blend-lb-0-952 :: 18_wide_stack_oof.npy 
+ektarr/lb-0-95121-realmlp-stacking :: oof_predictions.csv 
+francescoalbanesephd/s6e11-gbdt-v1-0 :: oof_catboost.parquet oof_lightgbm.parquet oof_xgboost.parquet 
+gauravduttaiiitb/org-s6e11-autogluon-good-quality :: oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl 
+gauravduttaiiitb/s6e11-autogluon-good-quality :: oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl 
+gauravduttaiiitb/s6e11-autogluon-medium-quality :: oof.pkl 
+gauravduttaiiitb/s6e11-org-best-quality :: oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl 
+gauravduttaiiitb/s6e11-org-extreme-quality :: oof.pkl oof.pkl oof.pkl oof.pkl 
+gauravduttaiiitb/s6e11-org-good-quality :: oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl 
+gauravduttaiiitb/s6e11-org-good-quality-v082 :: oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl 
+gauravduttaiiitb/s6e11-org-medium-quality :: oof.pkl 
+gauravduttaiiitb/s6e11-org-tabarena :: oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl oof.pkl 
+gauravduttaiiitb/s6e11-pseudo-autogluon-medium-quality :: oof.pkl oof.pkl 
+goodpjw2008/s6e11-part-12-wide-stack-2nd-lm-lb-0-95298 :: glmoof_gb_s0.npy oof_gb_s0.npy 
+gopikrishnan2005/s6e11-eda-cat-lgbm-xgb :: oof_predictions.csv 
+goutamsharma12/pipeline-2-fraud-detection :: oof_predictions_ultra.csv 
+herczeggyrgy/credit-fraud-s6e11-v2 :: oof_predictions.csv adversarial_oof.csv oof_prediction_correlations.csv oof_probability_histograms.csv 
+herczeggyrgy/s6e11 :: oof_candidate_ranking_v3.csv oof_diagnostics.png oof_predictions_v3.csv 
+kava1/s6e11-predicting-credit-card-fraud-catboost :: oof_catboost_v9_deep.npy oof_catboost_v9_medium.npy oof_catboost_v9_randomized.npy oof_catboost_v9_regularized.npy oof_catboost_v9_shallow.npy oof_catboost_v9_strong_regularized.npy 
+lazyyeou/s6e11-digit-trie-te-joint-glm-nested-stack :: glm_joint_96key_oof.npy lgb_l4__s0_oof.npy lgb_l4__s1_oof.npy lgb_l4__s2_oof.npy lgb_l4_bag_oof.npy lgb_rawview_oof.npy lgb_s100__s0_oof.npy lgb_s100__s1_oof.npy lgb_s100_bag_oof.npy xgb_d2__s0_oof.npy xgb_d2__s1_oof.npy xgb_d2__s2_oof.npy xgb_d2__s3_oof.npy xgb_d2__s4_oof.npy xgb_d2_bag_oof.npy xgb_l4__s0_oof.npy xgb_l4__s1_oof.npy xgb_l4__s2_oof.npy xgb_l4__s3_oof.npy xgb_l4__s4_oof.npy xgb_l4_bag_oof.npy 
+liamob96/lightgbm-and-lr-baselines :: LGB001_oof.npy LR001_oof.npy 
+lourenswalters/glm-catboost-bag-fraud :: oof_glm_catboost_bag.csv 
+lucifer19/the-golden-signal-consensus-blend-v22 :: v22_oof_queue.png 
+masayakawamata/s6e11-distillation-adds-no-clear-tree-gain :: oof.npy oof.npy 
+masayakawamata/s6e11-encoded-logistic-matches-a-shallow-tree :: oof.npy 
+masayakawamata/s6e11-gpt-2-target-first-classifier-cv-0-9500 :: oof.csv oof.npy 
+masayakawamata/s6e11-integer-and-decimal-parts-0-002-on-xgb :: oof.npy oof.npy oof.npy oof.npy oof.npy oof.npy 
+masayakawamata/s6e11-oof-stack-cv-0-95152-lb-0-95137 :: oof.csv oof.npy 
+masayakawamata/s6e11-single-logreg-te-features-cv-0-9502 :: oof.csv oof.npy 
+masayakawamata/s6e11-single-xgb-te-features-cv-0-9504 :: oof.csv oof.npy 
+masayakawamata/s6e11-target-encoding-0-007-lr-0-0015-xgb :: oof.npy oof.npy oof.npy oof.npy oof.npy oof.npy oof.npy 
+masayakawamata/s6e11-xgboost-encoding-switchboard-cv-0-950 :: oof.npy 
+maverickss26/fraud-eda-gbdts-vs-ft-transformer-shap-fastapi :: oof.npy oof.npy oof.npy oof.npy oof.npy oof.npy oof.npy oof.npy oof.npy oof.npy 
+mdmuqtadirfuad/96-key-digit-trie-gpt-2-full-refit-hybrid :: glm_unified_96key_oof.npy lgb_unified_96key_bag_oof.npy xgb_unified_96key_bag_oof.npy 
+mdmuqtadirfuad/s6e11-10-full-refit-lightgbm-and-glm-views :: oof_glm_all_s300.npy oof_lgb3_all_s300.npy oof_lgb4_ext_s20.npy 
+mdmuqtadirfuad/s6e11-9-full-refit-seed-bagged-lightgbm :: oof_lgb3_sel_s20.npy oof_lgb3_seltg_s100.npy 
+mdmuqtadirfuad/s6e11-bilstm-feature-tokens-optuna :: oof_lstm.npy 
+mdmuqtadirfuad/s6e11-digit-keys-value-te-shallow-gbdt-glm :: oof_glm_base.npy oof_glm_ext.npy oof_glm_ext_s100.npy oof_lgb3_ext.npy oof_lgb3_ext_s100.npy oof_lgb4_ext.npy 
+mdmuqtadirfuad/s6e11-gbdt-trio-original-data :: oof_cat_base.npy oof_cat_fe.npy oof_lgb_base.npy oof_lgb_fe.npy oof_xgb_base.npy oof_xgb_fe.npy 
+mdmuqtadirfuad/s6e11-optuna-digit-encoding-selection :: oof_cat4_dsel.npy oof_glm_dsel.npy oof_lgb3_dsel.npy oof_xgb2_dsel.npy oof_xgb3_dsel.npy 
+mdmuqtadirfuad/s6e11-optuna-feature-selection :: oof_cat_sel.npy oof_lgb_sel.npy oof_xgb_all.npy oof_xgb_sel.npy 
+mdmuqtadirfuad/s6e11-v2-gpt2-token-keys-joint-glm :: oof_glm_s50.npy oof_jglm_s20.npy oof_lgb3_s100.npy oof_xgb2_s100.npy oof_xgb2_s20.npy oof_xgb3_s100.npy 
+mdmuqtadirfuad/s6e11-v3-bilstm-mlp-over-encoded-keys :: oof_bilstm_keys.npy oof_mlp_keys.npy 
+megayak/s6e11-per-value-digit-te-shallow-tree-stack :: oof_glm_boost.npy oof_glm_boost_c.npy oof_glm_boost_raw.npy oof_glm_boost_xgb.npy oof_glm_cnt.npy oof_lgb_raw.npy oof_lgb_te20.npy oof_xgb_te20.npy 
+mikhailnaumov/credit-card-fraud-xgb :: XGB2_12_oof.npy 
+mojjeed/gpt-2-storyteller-on-a-tpu-v5e-8 :: gpt2tf_f0_oof_scores.npy gpt2tf_f1_oof_scores.npy gpt2tf_f2_oof_scores.npy gpt2tf_f3_oof_scores.npy gpt2tf_f4_oof_scores.npy gpt2tffields_f0_oof.npy gpt2tffields_f1_oof.npy gpt2tffields_f2_oof.npy gpt2tffields_f3_oof.npy gpt2tffields_f4_oof.npy 
+mojjeed/s6e11-k9-gpt-2-storyteller-tpu :: gpt2tf_f0_oof_scores.npy 
+nikitachubai/predicting-credit-card-fraud-lightgbm-s6e11 :: oof_lgbm.csv 
+nilanjansaha123/96-key-digit-trie-gpt-2-full-refit-hybrid :: glm_unified_96key_oof.npy lgb_unified_96key_bag_oof.npy lgb_unified_l7_oof.npy lgb_unified_s100_bag_oof.npy xgb_unified_96key_bag_oof.npy 
+nirmalpatel02/glm-boost-digit-level-risk-residual-learning :: oof_glm_boost.npy 
+rafanikitas/s6e11-fraud-from-auc-to-review-budgets :: final_oof.csv development_oof.csv final_oof.csv oof_predictions.csv final_component_te_multiscale_oof.csv final_oof.csv oof_queue_transitions.csv 
+ravi20076/playgrounds6e11-public-baseline-v1 :: oof_preds.csv 
+ravi20076/playgrounds6e11-public-eda-v1 :: oof_target_means.parquet 
+sameershaikh27/s6e11-fraud-digit-key-te-4-leaf-trees-blend :: oof.csv 
+sameershaikh27/s6e11-fraud-digit-sequence-cnn-member :: dcnn_bag_oof.npy dcnn_s42_oof.npy dcnn_s7_oof.npy oof.csv 
+sameershaikh27/s6e11-fraud-does-the-original-20k-help-measured :: oof.csv 
+sameershaikh27/s6e11-fraud-glm-boost-on-ten-folds :: gb10_bag_oof.npy gb10_s0_oof.npy gb10_s1_oof.npy oof.csv 
+sameershaikh27/s6e11-fraud-glm-boost-seed-bag-and-full-refit :: gb_bag_oof.npy gb_s0_oof.npy gb_s1_oof.npy gb_s2_oof.npy oof.csv 
+sameershaikh27/s6e11-fraud-lgbm-xgb-baseline-with-honest-cv :: oof.csv 
+sameershaikh27/s6e11-fraud-realmlp-glm-stack-on-digit-te :: oof.csv 
+sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured :: oof.csv 
+sameershaikh27/s6e11-fraud-target-encoding-3-ways-1-honest :: oof.csv 
+sameershaikh27/s6e11-fraud-the-playbook-10-notebooks-in-1-page :: oof.csv 
+sameershaikh27/s6e11-fraud-wide-pooled-stack-every-bank-found :: oof.csv 
+shinichimonden/s6e11-baseline-starter-kit-significant-parameter :: oof_lgbm_nooptuna.csv 
+sidhaarthshree/s6e11-100-self-trained-stack-lb-0-95154 :: glm_joint_oof.npy lgb_k_l7_oof.npy lgb_k_oof.npy lgb_k_s100_oof.npy lgb_raw_oof.npy xgb_k_oof.npy 
+soichiroshido/reading-the-generator-fingerprints-s6e11-fraud :: oof_glm.npy oof_lgb.npy oof_mlp.npy oof_xgb.npy 
+staesthetics/data-exploration-eda-basic-lgb-model-lb-0-94667 :: oof_lgb.csv 
+staesthetics/lgb-model-te-lb-0-94691 :: oof_lgb.csv oof_lgb_te_42.csv 
+staesthetics/lgb-model-te-loop-4-different-seed :: oof_lgb_te_106.csv oof_lgb_te_1508.csv oof_lgb_te_2312.csv oof_lgb_te_67.csv 
+takayuki0127/s6e11-shallow-trees-value-te-digit-keys-gl :: S1_lgb4_raw_oof.npy S2_lgb4_te_oof.npy S3_lgb4_te_digits_oof.npy S4_lgb3_te_digits_oof.npy S5_glm_te_digits_oof.npy S6_glm_te_s50_oof.npy 
+utkarshkviim/s6e11-tiny-trees-value-te-cv-0-9489-lb-0-9490 :: oof_members.csv 
+wguesdon/s6e11-eda-and-reproducible-tree-ensemble :: oof_logit_stack.cpython-313.pyc oof_logit_stack.py public_oof_stack.cpython-313.pyc public_oof_stack.py public_oof_stack_retrain.py oof_stack.json 
+yashteotia/s6e11-beginner-expert-every-step-measured :: oof_predictions.csv 
+yekenot/ps-s6-e11-realmlp-pytabkit :: oof_preds.csv 
+yekenot/ps-s6-e11-realmlp-pytorch :: oof_preds.csv 
+yekenot/ps-s6-e11-tabm-pytabkit :: oof_preds.csv 
+yoletech/kaggle-playground-predicting-credit-card-fraud :: oof_predictions.csv 
+zhenruiweng/s6e11-85-features-realmlp-for-fraud-prediction :: oof_predictions.csv submission_realmlp_oof0.94883.csv 
+zhenruiweng/s6e11-realmlp-for-fraud-prediction :: oof_predictions.csv submission_realmlp_oof0.94887.csv 

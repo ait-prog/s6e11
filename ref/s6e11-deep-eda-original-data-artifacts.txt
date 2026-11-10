@@ -1,0 +1,1874 @@
+## MD: <div style="background:linear-gradient(118deg,#13243A 0%,#1B3652 69%,#165768 100%);border:1px solid #244961;border-radius:18px;padding:30px 32px 27px;color:#FFFFFF;margin:8px 0 16px;">
+  <div style="font-size:11px;font-weight:750;letter-spacing:2px;color:#84D8D1;margin-bottom:13px;">KAGGLE · PLAYGROUND SERIES S6E11 · NOVEMBER 2026</div>
+  <div style="font-size:35px;font-weight:800;line-height:1.15;letter-spacing:-0.8px;color:#FFFFFF;">Fraud Beneath the Surface</div>
+  <div style="font-size:16px;color:#D7E3EE;max-width:780px;line-height:1.6;margin-top:12px;">Why certain warning signals only make sense in the context of a transaction — and which traces of the original dataset survived synthetic generation.</div>
+  <div style="font-size:12px;color:#A7BED0;margin-top:13px;">Fraud Detection &nbsp;·&nbsp; 24 features &nbsp;·&nbsp; ROC AUC</div>
+  <div style="display:flex;gap:11px;flex-wrap:wrap;margin-top:24px;">
+    <div style="flex:1 1 150px;border:1px solid #36536D;border-radius:11px;background:#203D59;padding:12px 15px;"><div style="font-size:26px;font-weight:800;color:#FFFFFF;">1.67%</div><div style="font-size:11px;color:#B9D0DF;margin-top:4px;">Fraud rate · train</div></div>
+    <div style="flex:1 1 150px;border:1px solid #36536D;border-radius:11px;background:#203D59;padding:12px 15px;"><div style="font-size:26px;font-weight:800;color:#FFFFFF;">33.1%</div><div style="font-size:11px;color:#B9D0DF;margin-top:4px;">Fraud without active flags</div></div>
+    <div style="flex:1 1 
+## MD: ## 01 · Imports
+## CODE:
+from pathlib import Path
+import warnings
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+from scipy.stats import ks_2samp, chi2_contingency, spearmanr
+from scipy.spatial.distance import jensenshannon
+from sklearn.metrics import roc_auc_score
+from IPython.display import display, Markdown
+
+warnings.filterwarnings('ignore', category=FutureWarning)
+pd.set_option('display.max_columns', 60)
+pd.set_option('display.max_rows', 70)
+pd.set_option('display.float_format', '{:,.4f}'.format)
+print('Libraries loaded.')
+## MD: ## 02 · Configuration and Visual Style
+
+Here we set the file paths, analysis settings, and chart styling. A consistent palette and shared plotting parameters make the results easier to compare across sections.
+## CODE:
+SEED = 42
+TARGET = 'is_fraud'
+ID = 'id'
+
+COMP_DIR = Path('/kaggle/input/competitions/playground-series-s6e11')
+ORIGINAL_PATH = Path('/kaggle/input/datasets/uditjain13/credit-card-fraud-detection-2026/credit_card_fraud_2026.csv')
+
+C = {
+    'ink': '#17263C', 'muted': '#61758D', 'blue': '#2775D1',
+    'red': '#E85A70', 'mint': '#13A99B', 'gold': '#E7A84B',
+    'pale': '#F6F9FC', 'grid': '#DDE6EF', 'white': '#FFFFFF'
+}
+
+sns.set_theme(style='white', font_scale=0.93)
+plt.rcParams.update({
+    'figure.facecolor': C['white'], 'axes.facecolor': C['pale'],
+    'axes.edgecolor': C['grid'], 'axes.labelcolor': C['ink'],
+    'text.color': C['ink'], 'xtick.color': C['muted'],
+    'ytick.color': C['muted'], 'axes.titlesize': 11,
+    'axes.titleweight': 'semibold', 'font.size': 10,
+    'axes.spines.top': False, 'axes.spines.right': False,
+    'savefig.bbox': 'tight', 'figure.dpi': 110,
+})
+
+def finish(fig, title, note='', top=0.91):
+    fig.suptitle(title, x=0.06, y=0.99, ha='left', fontsize=17, fontweight='bold', color=C['ink'])
+    if note:
+        fig.text(0.06, 0.92 if fig.get_size_inches()[1] <= 8 else 0.945, note, ha='left', fontsize=9, color=C['muted'])
+    fig.tight_layout(rect=[0.03, 0.03, 0.98, top])
+    plt.show()
+
+print('Visual style configured · consistent colors and typography · no PNG files saved')
+## MD: <a id="dataset-overview"></a>
+
+## 03 · Load Data
+
+We load train, test, and original without modifying them. Transaction IDs have different names in the synthetic and original datasets, so we check feature correspondence rather than identifier names.
+## CODE:
+train = pd.read_csv(COMP_DIR / 'train.csv')
+test = pd.read_csv(COMP_DIR / 'test.csv')
+original = pd.read_csv(ORIGINAL_PATH)
+
+FEATURES = [c for c in test.columns if c != ID]
+NUM = train[FEATURES].select_dtypes(include='number').columns.tolist()
+CAT = train[FEATURES].select_dtypes(include='object').columns.tolist()
+BOOL = train[FEATURES].select_dtypes(include='bool').columns.tolist()
+
+assert len(FEATURES) == 24 and len(NUM) == 13 and len(CAT) == 5 and len(BOOL) == 6
+assert set(FEATURES).issubset(original.columns)
+assert TARGET in train and TARGET in original
+assert set(train.columns) == set(test.columns) | {TARGET}
+
+print(f'Train: {train.shape}  |  Test: {test.shape}  |  Original: {original.shape}')
+print(f'Features: {len(NUM)} numerical · {len(CAT)} categorical · {len(BOOL)} Boolean')
+display(train.head(3))
+## MD: ## 04 · The Dataset in Four Numbers
+
+Dataset sizes and the number of features establish the scale of this investigation.
+## CODE:
+from matplotlib.patches import FancyBboxPatch
+
+passport = [
+    ('TRAIN', f'{len(train):,}', 'labeled observations', C['blue']),
+    ('TEST', f'{len(test):,}', 'unlabeled observations', C['mint']),
+    ('FRAUD RATE', f'{100 * train[TARGET].mean():.3f}%', f'{int(train[TARGET].sum()):,} fraud cases', C['red']),
+    ('ORIGINAL', f'{len(original):,}', f'{len(FEATURES)}original input features', C['gold']),
+]
+fig, axes = plt.subplots(1, 4, figsize=(17, 3.1))
+for ax, (label, value, subtitle, color) in zip(axes, passport):
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.add_patch(FancyBboxPatch((.03, .10), .94, .82, boxstyle='round,pad=0.02,rounding_size=.075',
+                                linewidth=1, edgecolor=C['grid'], facecolor=C['white']))
+    ax.add_patch(FancyBboxPatch((.09, .78), .13, .045, boxstyle='round,pad=0.015', linewidth=0, facecolor=color))
+    ax.text(.09, .63, label, color=C['muted'], fontsize=9, fontweight='bold', transform=ax.transAxes)
+    ax.text(.09, .37, value, color=C['ink'], fontsize=23, fontweight='bold', transform=ax.transAxes)
+    ax.text(.09, .19, subtitle, color=C['muted'], fontsize=9, transform=ax.transAxes)
+    ax.axis('off')
+fig.subplots_adjust(left=.015, right=.985, bottom=.03, top=.95, wspace=.09)
+plt.show()
+## MD: ## 05 · Feature Dictionary
+
+Before plotting, let's identify what each field represents.
+## CODE:
+DESCR = {
+    'amount_usd': 'Transaction amount, USD',
+    'hours_since_last_txn': 'Hours since previous transaction',
+    'txn_count_last_24h': 'Transactions in the last 24 hours',
+    'distance_from_home_km': 'Distance from home, km',
+    'card_age_months': 'Card age, months',
+    'customer_age': 'Customer age, years',
+    'account_balance_usd': 'Account balance, USD',
+    'cvv_retry_count': 'Repeated CVV attempts',
+    'velocity_score': 'Transaction velocity/intensity',
+    'time_of_day_hour': 'Hour of day',
+    'day_of_week': 'Day of week (0–6)',
+    'merchant_risk_score': 'Merchant risk score',
+    'prior_disputes': 'Prior disputed transactions',
+    'merchant_category': 'Merchant category',
+    'card_type': 'Card payment network',
+    'auth_method': 'Authentication method',
+    'channel': 'Transaction channel',
+    'device_type': 'Device type',
+    'is_foreign_transaction': 'Foreign transaction',
+    'is_new_merchant': 'New merchant',
+    'used_vpn': 'VPN usage',
+    'ip_country_mismatch': 'IP country mismatch',
+    'billing_shipping_mismatch': 'Billing/shipping address mismatch',
+    'is_ai_generated_scam_attempt': 'AI-generated scam attempt flag'
+}
+
+dictionary = pd.DataFrame({
+    'Feature': FEATURES,
+    'Group': ['Numerical' if c in NUM else 'Category' if c in CAT else 'Boolean' for c in FEATURES],
+    'Description': [DESCR[c] for c in FEATURES]
+})
+display(dictionary.style.hide(axis='index'))
+## MD: ## 06 · Data Quality Checks
+
+We examine missing values, constant columns, unique-value counts, duplicates, and structural consistency across train, test, and original.
+## CODE:
+audit = pd.DataFrame(index=FEATURES)
+audit['Type'] = train[FEATURES].dtypes.astype(str)
+audit['Unique in train'] = train[FEATURES].nunique(dropna=False)
+audit['Unique in test'] = test[FEATURES].nunique(dropna=False)
+audit['Missing in train'] = train[FEATURES].isna().sum()
+audit['Missing in test'] = test[FEATURES].isna().sum()
+audit['Missing in original'] = original[FEATURES].isna().sum()
+
+display(audit)
+
+print('Full-row duplicates excluding ID:')
+print('Train:', train[FEATURES].duplicated().sum())
+print('Test:', test[FEATURES].duplicated().sum())
+print('Original:', original[FEATURES].duplicated().sum())
+print('Unique train IDs:', train[ID].is_unique)
+print('Unique test IDs:', test[ID].is_unique)
+print('Train/test ID overlap:', len(set(train[ID]) & set(test[ID])))
+print('Constant features:', audit.index[audit['Unique in train'] < 2].tolist())
+## MD: <a id="fraud-target"></a>
+
+## 07 · Target Variable: How Rare Is Fraud?
+
+ROC AUC measures how well transactions are ranked under severe class imbalance, but it does not account for the cost of false positives. We first compare the baseline fraud rate in train and original.
+## CODE:
+target_counts = pd.DataFrame({
+    'Source': ['Train', 'Original'],
+    'Transactions': [len(train), len(original)],
+    'Fraud': [int(train[TARGET].sum()), int(original[TARGET].sum())]
+})
+target_counts['Fraud rate, %'] = 100 * target_counts['Fraud'] / target_counts['Transactions']
+display(target_counts.style.format({'Fraud rate, %': '{:.3f}%'}).hide(axis='index'))
+
+fig, ax = plt.subplots(figsize=(10, 4))
+base = np.arange(2)
+rates = target_counts['Fraud rate, %'].values
+bars = ax.barh(base, rates, color=[C['blue'], C['gold']], height=.48)
+for b, v, n in zip(bars, rates, target_counts['Fraud']):
+    ax.text(v + .03, b.get_y() + b.get_height()/2, f'{v:.3f}% · {n:,} cases', va='center', weight='bold')
+ax.set_yticks(base, ['Train', 'Original'])
+ax.invert_yaxis()
+ax.set_xlim(0, max(rates)*1.55)
+ax.set_xlabel('Fraud rate, %')
+ax.grid(axis='x', alpha=.18)
+finish(fig, 'A Rare Event: Around 1.7% of Transactions', 'Labels show the positive-class rate and the absolute number of fraudulent transactions.')
+## MD: <a id="feature-analysis"></a>
+
+## 08 · Numerical Features: A Complete Statistical Overview
+
+We calculate descriptive statistics for **all 13 numerical features**, focusing on skewness, outliers, and discrete scales that are stored as numbers but function as counts.
+## CODE:
+numeric_summary = train[NUM].describe(percentiles=[.01, .05, .25, .5, .75, .95, .99]).T
+numeric_summary['unique'] = train[NUM].nunique()
+numeric_summary['skew'] = train[NUM].skew()
+display(numeric_summary[['count', 'mean', 'std', 'min', '1%', '25%', '50%', '75%', '99%', 'max', 'unique', 'skew']].round(3))
+## MD: ## 09 · Numerical Distributions: Train, Test, and Original
+
+For each numerical feature, we plot distributions from all three sources on the same axis. Histograms are density-normalized, so differences in dataset size do not affect bar height.
+## CODE:
+fig, axes = plt.subplots(4, 4, figsize=(18, 15))
+axes = axes.ravel()
+plot_rng = np.random.default_rng(SEED)
+
+for ax, c in zip(axes, NUM):
+    a = train[c].sample(n=min(45000, len(train)), random_state=SEED).to_numpy()
+    b = test[c].sample(n=min(22000, len(test)), random_state=SEED).to_numpy()
+    o = original[c].to_numpy()
+    lo, hi = np.quantile(np.concatenate([a, b, o]), [.005, .995])
+    if hi <= lo:
+        hi = lo + 1
+    bins = np.linspace(lo, hi, 43)
+    ax.hist(a, bins=bins, density=True, histtype='step', linewidth=1.9, color=C['blue'], label='Train')
+    ax.hist(b, bins=bins, density=True, histtype='step', linewidth=1.5, color=C['mint'], label='Test')
+    ax.hist(o, bins=bins, density=True, histtype='step', linewidth=1.5, color=C['gold'], label='Original')
+    ax.set_title(c, loc='left', fontsize=10)
+    ax.grid(axis='y', alpha=.13)
+for ax in axes[len(NUM):]:
+    ax.axis('off')
+axes[0].legend(frameon=False, fontsize=8)
+finish(fig, '13 Numerical Features · Three Data Sources', 'Train and test are generally similar; original can differ substantially. Identical bins are used for comparison.', top=.92)
+## MD: ## 10 · Numerical Feature Signal: Univariate ROC AUC
+
+For each numerical feature, we compute ROC AUC using the raw values, then select the direction that gives an AUC of at least 0.5.
+## CODE:
+one_auc = pd.DataFrame({
+    'Feature': NUM,
+    'Raw-value AUC': [roc_auc_score(train[TARGET], train[c]) for c in NUM]
+})
+one_auc['Best-direction AUC'] = one_auc['Raw-value AUC'].apply(lambda x: max(x, 1-x))
+one_auc['Direction'] = np.where(one_auc['Raw-value AUC'] >= .5, '↑', '↓')
+one_auc = one_auc.sort_values('Best-direction AUC', ascending=True)
+display(one_auc.sort_values('Best-direction AUC', ascending=False).round(5).reset_index(drop=True))
+
+fig, ax = plt.subplots(figsize=(11, 7))
+val = one_auc['Best-direction AUC']
+ax.barh(one_auc['Feature'], val-.5, left=.5, color=[C['red'] if x >= .70 else C['blue'] for x in val], height=.65)
+for i, x in enumerate(val):
+    ax.text(x + .004, i, f'{x:.3f}', va='center', fontsize=9)
+ax.set_xlim(.49, .82)
+ax.axvline(.5, linestyle='--', color=C['muted'], linewidth=1)
+ax.set_xlabel('Univariate ROC AUC · direction selected on train')
+ax.grid(axis='x', alpha=.18)
+finish(fig, 'Where Is the Individual Signal?', 'Selecting direction on train makes this descriptive, not a valid out-of-fold estimate.')
+## MD: ## 11 · How Does Fraud Risk Change Across Numerical Features?
+
+We divide each feature into intervals based on train quantiles and calculate the fraud rate within each interval. Group size matters: a result based on a handful of transactions should not be interpreted with the same confidence as one based on hundreds of thousands.
+## CODE:
+fig, axes = plt.subplots(4, 4, figsize=(18, 15))
+axes = axes.ravel()
+
+for ax, c in zip(axes, NUM):
+    discrete = train[c].nunique() <= 16
+    bins = train[c] if discrete else pd.qcut(train[c], q=10, duplicates='drop')
+    stat = train.groupby(bins, observed=True)[TARGET].agg(['mean', 'size'])
+    x = np.arange(len(stat))
+    ax.plot(x, stat['mean']*100, color=C['red'], marker='o', markersize=4, linewidth=2)
+    ax.axhline(train[TARGET].mean()*100, color=C['muted'], linestyle='--', linewidth=1)
+    ax.set_title(c, loc='left', fontsize=10)
+    ax.set_xlabel('Feature value' if discrete else f'{len(stat)} ascending bins →', fontsize=8)
+    ax.set_ylabel('Fraud, %', fontsize=8)
+    pos = x[::max(1, len(x)//6)]
+    ax.set_xticks(pos, [str(v) if discrete else str(k+1) for k, v in zip(pos, stat.index[::max(1, len(x)//6)])])
+    ax.grid(axis='y', alpha=.15)
+for ax in axes[len(NUM):]:
+    ax.axis('off')
+finish(fig, 'How Does Risk Vary Across Numerical Features?', 'Dashed lines indicate the overall train fraud rate. Bin counts depend on the number of unique values.', top=.92)
+## MD: ## 12 · Categorical Features: Frequency and Risk
+
+We examine **all five categorical features**. For each category, we compare how often it occurs and what share of its transactions are fraudulent. High risk in a small group does not necessarily mean a large contribution to the total number of fraud cases.
+## CODE:
+cat_stats = {}
+for c in CAT:
+    cat_stats[c] = train.groupby(c, dropna=False)[TARGET].agg(['mean', 'size', 'sum']).sort_values('mean', ascending=False)
+    cat_stats[c].columns = ['fraud_rate', 'n', 'fraud_n']
+    print(f'\n{c}: {DESCR[c]}')
+    display(cat_stats[c].assign(fraud_pct=lambda d: d.fraud_rate*100)[['n', 'fraud_n', 'fraud_pct']].round(3))
+## MD: ### 13 · Categorical Features: Visual Comparison
+
+After the tables, we look separately at the frequency and fraud rate of each category.
+## CODE:
+fig, axes = plt.subplots(5, 2, figsize=(17, 23), gridspec_kw={'width_ratios': [1.1, 1.0]})
+
+for row, c in enumerate(CAT):
+    st = cat_stats[c].sort_values('n', ascending=True)
+    yy = np.arange(len(st))
+    ax_l, ax_r = axes[row]
+    ax_l.barh(yy, st['n']/len(train)*100, color=C['blue'], height=.65)
+    ax_l.set_yticks(yy, st.index.astype(str), fontsize=9)
+    ax_l.set_xlabel('Share of transactions, %')
+    ax_l.set_title(f'{c} · prevalence', loc='left')
+    ax_l.grid(axis='x', alpha=.14)
+    ax_r.barh(yy, st['fraud_rate']*100, color=C['red'], height=.65)
+    ax_r.axvline(train[TARGET].mean()*100, color=C['muted'], linestyle='--', linewidth=1)
+    ax_r.set_yticks(yy, ['']*len(st))
+    ax_r.set_xlabel('Fraud rate, %')
+    ax_r.set_title('Within-category risk', loc='left')
+    ax_r.grid(axis='x', alpha=.14)
+finish(fig, 'Categories · Prevalence ≠ Risk', 'Left: share of transactions. Right: fraud rate. Dashed line: overall fraud rate.', top=.956)
+## MD: ## 14 · Categorical Risk Map: Frequency vs Intensity
+
+Ranking categories by fraud rate alone can be misleading: a rare category may appear dangerous because of just a few cases. In the first chart, each point represents one value of one of the five categorical features. The X-axis shows transaction count, the Y-axis shows risk relative to the overall rate, and point area corresponds to the number of fraudulent transactions.
+
+The second chart highlights the categories that account for the most **fraudulent transactions in absolute terms**. These are two distinct perspectives: how high the risk is and how much a group contributes to total fraud.
+## CODE:
+cat_palette = [C['blue'], C['mint'], C['red'], C['gold'], '#8C6BC5']
+fraud_base = train[TARGET].mean()
+landscape_rows = []
+for field in CAT:
+    for category, group in cat_stats[field].iterrows():
+        n = int(group['n'])
+        fraud_n = int(group['fraud_n'])
+        risk = float(group['fraud_rate'])
+        landscape_rows.append({'feature': field, 'category': str(category), 'n': n,
+                               'fraud_n': fraud_n, 'risk': risk, 'lift': risk / fraud_base})
+landscape = pd.DataFrame(landscape_rows)
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 7), gridspec_kw={'width_ratios': [1.17, 1]})
+for color, (field, group) in zip(cat_palette, landscape.groupby('feature', sort=False)):
+    ax1.scatter(group['n'], group['lift'], s=40 + 10 * np.sqrt(group['fraud_n'].clip(lower=0)),
+                c=color, alpha=.78, edgecolors='white', linewidths=.75, label=field, zorder=3)
+ax1.axhline(1, color=C['muted'], ls='--', lw=1.5)
+ax1.set_xscale('log')
+ax1.set_xlabel('Transaction count · logarithmic scale')
+ax1.set_ylabel('Fraud lift relative to baseline · ×')
+ax1.set_title('All categorical values', loc='left')
+ax1.grid(alpha=.15)
+ax1.legend(frameon=False, fontsize=8, loc='upper right')
+priority = landscape.loc[landscape['n'] >= max(100, int(len(train) * .001))].copy()
+priority['label'] = priority['feature'].str.replace('_', ' ', regex=False) + ' · ' + priority['category']
+priority = priority.sort_values('fraud_n', ascending=True).tail(11)
+colors_by_field = {x: cat_palette[i] for i, x in enumerate(CAT)}
+ax2.barh(priority['label'], priority['fraud_n'], color=priority['feature'].map(colors_by_field), height=.65)
+for i, row in enumerate(priority.itertuples(index=False)):
+    ax2.text(row.fraud_n + max(1, priority['fraud_n'].max()*.01), i,
+             f'{row.fraud_n:,} / {row.n:,}  ·  {row.lift:.2f}×', va='center', fontsize=8)
+ax2.set_xlim(0, priority['fraud_n'].max()*1.65 if len(priority) else 1)
+ax2.set_title('Categories with the Most Fraud Cases', loc='left')
+ax2.set_xlabel('Number of fraudulent transactions')
+ax2.grid(axis='x', alpha=.15)
+finish(fig, 'Fraud Risk Landscape · How Widespread Is the Risk?',
+       'Each point is a category; size ≈ number of fraud cases. Compare risk with its supporting sample size.', top=.85)
+display(landscape.sort_values('fraud_n', ascending=False).head(12).round(4).reset_index(drop=True))
+## MD: ## 15 · Fraud in Dollars: Frequency and Monetary Volume
+
+Counting fraudulent transactions reveals where fraud occurs most often, but not where the largest transaction amounts are concentrated. Here **fraud amount** means the sum of `amount_usd` for transactions labeled `is_fraud = 1`. It is a descriptive measure of transaction value, **not confirmed financial loss**.
+
+In synthetic train, fraudulent transactions make up **1.67% of operations** but account for **2.31% of total transaction value** ($1.29 million out of $55.92 million). Electronics contributes **46.9% of fraud-tagged dollars**, compared with **12.8% of fraud cases**; Travel contributes **21.4% of dollars** versus **4.6% of cases**. Gift Cards has the highest category fraud rate (**7.30%**), yet accounts for only **2.0% of fraud-tagged dollars**.
+
+The comparison with original offers a useful contrast: its overall fraud-tagged value share is also about **2.32%**, but its category-level allocation differs substantially. Original has only **339 fraud cases**, so its category breakdown is less stable. The two charts distinguish fraud **frequency** from fraud **value** without assuming that either measure alone describes operational impact.
+## CODE:
+# Transaction values tagged as fraud, not verified monetary losses.
+fraud_money_sources = {}
+for source_name, data in [('Synthetic train', train), ('Original', original)]:
+    working = data.assign(fraud_amount_usd=np.where(data[TARGET].eq(1), data['amount_usd'], 0.0))
+    detail = working.groupby('merchant_category', observed=True).agg(
+        transactions=(TARGET, 'size'),
+        fraud_cases=(TARGET, 'sum'),
+        transaction_amount_usd=('amount_usd', 'sum'),
+        fraud_amount_usd=('fraud_amount_usd', 'sum')
+    )
+    detail['fraud_rate_pct'] = 100 * detail['fraud_cases'] / detail['transactions']
+    detail['share_fraud_cases_pct'] = 100 * detail['fraud_cases'] / detail['fraud_cases'].sum()
+    detail['share_fraud_amount_pct'] = 100 * detail['fraud_amount_usd'] / detail['fraud_amount_usd'].sum()
+    fraud_money_sources[source_name] = detail
+
+    total_amount = data['amount_usd'].sum()
+    tagged_amount = detail['fraud_amount_usd'].sum()
+    print(f'{source_name}: {int(data[TARGET].sum()):,} fraud cases / {len(data):,} transactions '
+          f'({100*data[TARGET].mean():.2f}%); '
+          f'${tagged_amount:,.2f} tagged as fraud / ${total_amount:,.2f} total '
+          f'({100*tagged_amount/total_amount:.2f}%).')
+
+money_train = fraud_money_sources['Synthetic train'].sort_values('fraud_amount_usd', ascending=False)
+money_orig = fraud_money_sources['Original'].reindex(money_train.index)
+display(money_train[[
+    'transactions', 'fraud_cases', 'fraud_rate_pct', 'fraud_amount_usd',
+    'share_fraud_cases_pct', 'share_fraud_amount_pct'
+]].round(2))
+
+plot_categories = money_train.index[::-1]
+y = np.arange(len(plot_categories))
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(19, 8.6), gridspec_kw={'width_ratios': [1.05, 1]})
+ax1.barh(y - .2, money_train.loc[plot_categories, 'share_fraud_cases_pct'],
+         height=.38, color=C['blue'], label='Share of fraud cases')
+ax1.barh(y + .2, money_train.loc[plot_categories, 'share_fraud_amount_pct'],
+         height=.38, color=C['red'], label='Share of fraud-tagged dollars')
+ax1.set_yticks(y, plot_categories)
+ax1.set_xlabel('Share of synthetic-train fraud, %')
+ax1.set_title('Fraud Frequency vs Dollar Exposure', loc='left')
+ax1.legend(frameon=False, fontsize=8)
+ax1.grid(axis='x', alpha=.15)
+
+ax2.barh(y - .2, money_train.loc[plot_categories, 'share_fraud_amount_pct'],
+         height=.38, color=C['blue'], label='Synthetic train')
+ax2.barh(y + .2, money_orig.loc[plot_categories, 'share_fraud_amount_pct'],
+         height=.38, color=C['gold'], label='Original')
+ax2.set_yticks(y, plot_categories)
+ax2.set_xlabel('Share of fraud-tagged dollars, %')
+ax2.set_title('How the Dollar Mix Changes', loc='left')
+ax2.legend(frameon=False, fontsize=8)
+ax2.grid(axis='x', alpha=.15)
+finish(fig, 'Fraud in Dollars · Category-Level Exposure',
+       'Dollar exposure = value of transactions marked as fraud; original category shares are based on 339 cases.', top=.90)
+
+## MD: ## 16 · Where Fraud-Tagged Transaction Value Concentrates
+
+Large transactions may account for relatively few fraud cases but a disproportionately large share of the total value of transactions labeled as fraud. We divide each dataset into ten equally sized groups by `amount_usd` and compare three measures: share of total transaction value, share of fraud cases, and share of fraud-tagged transaction value. The top-decile threshold is calculated separately for train, test, and original.
+
+## CODE:
+# The largest-amount decile is defined independently within each dataset.
+# Monetary exposure means the amount of transactions labeled as fraud, not verified bank losses.
+tail_records = []
+tail_details = {}
+for source_name, frame in [('Train', train), ('Test', test), ('Original', original)]:
+    threshold = frame['amount_usd'].quantile(0.9)
+    top = frame['amount_usd'].ge(threshold)
+    row = {
+        'Датасет': source_name,
+        'Порог верхних 10%, $': threshold,
+        'Доля оборота в верхних 10%, %': 100 * frame.loc[top, 'amount_usd'].sum() / frame['amount_usd'].sum(),
+    }
+    if TARGET in frame.columns:
+        fraud = frame[TARGET].eq(1)
+        fraud_dollars = frame['amount_usd'].where(fraud, 0.0)
+        row['Доля fraud-случаев в верхних 10%, %'] = 100 * (fraud & top).sum() / fraud.sum()
+        row['Доля fraud-суммы в верхних 10%, %'] = 100 * fraud_dollars[top].sum() / fraud_dollars.sum()
+        decile = pd.qcut(frame['amount_usd'].rank(method='first'), 10, labels=False) + 1
+        tail_details[source_name] = (fraud_dollars.groupby(decile).sum() / fraud_dollars.sum() * 100).reindex(range(1, 11))
+    tail_records.append(row)
+
+tail_comparison = pd.DataFrame(tail_records).set_index('Датасет')
+display(tail_comparison.round(2))
+
+fig, axes = plt.subplots(1, 2, figsize=(18, 6.5), gridspec_kw={'width_ratios': [1.1, 1]})
+metrics = ['Доля оборота в верхних 10%, %', 'Доля fraud-случаев в верхних 10%, %', 'Доля fraud-суммы в верхних 10%, %']
+metric_labels = ['Все суммы', 'Случаи fraud', 'Сумма fraud']
+x = np.arange(len(metrics))
+for label, offset, color in [('Train', -0.18, C['blue']), ('Original', 0.18, C['gold'])]:
+    values = tail_comparison.loc[label, metrics].to_numpy(dtype=float)
+    bars = axes[0].bar(x + offset, values, width=0.34, color=color, label=label)
+    axes[0].bar_label(bars, labels=[f'{v:.1f}%' for v in values], padding=3, fontsize=9)
+axes[0].set_xticks(x, metric_labels)
+axes[0].set_ylim(0, 94)
+axes[0].set_ylabel('Доля показателя в верхних 10% операций, %')
+axes[0].set_title('Что находится в верхнем дециле', loc='left')
+axes[0].legend(frameon=False)
+axes[0].grid(axis='y', alpha=0.17)
+
+deciles = np.arange(1, 11)
+for label, color in [('Train', C['blue']), ('Original', C['gold'])]:
+    axes[1].plot(deciles, tail_details[label], color=color, marker='o', lw=2.2, label=label)
+axes[1].axvspan(9.6, 10.4, color=C['red'], alpha=0.08)
+axes[1].set_xticks(deciles)
+axes[1].set_xlabel('Дециль суммы транзакции (10 = крупнейшие)')
+axes[1].set_ylabel('Доля денежного объёма fraud, %')
+axes[1].set_title('Концентрация fraud-суммы по децилям', loc='left')
+axes[1].grid(axis='y', alpha=0.17)
+axes[1].legend(frameon=False)
+finish(fig, 'Fraud в денежном выражении · верхние 10% транзакций',
+       'Группы построены по amount_usd внутри каждого датасета; суммы не равны подтверждённым потерям.', top=0.84)
+
+## MD: <div style="border-left:4px solid #E85A70;background:#F7F9FC;border-radius:0 10px 10px 0;padding:14px 18px;margin:12px 0 22px;">
+  <div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#C84A61;">MONETARY CONCENTRATION</div>
+  <div style="font-size:14px;line-height:1.65;color:#243A53;margin-top:5px;">In train, the largest 10% of transactions account for <b>79.1% of the value of fraud-tagged transactions</b>, although they contain only <b>17.5% of fraud cases</b>. In original, the corresponding shares are <b>60.8%</b> and <b>12.7%</b>. The number of cases and their monetary value reveal different aspects of the same problem.</div>
+</div>
+
+## MD: <div style="border-left:4px solid #2775D1;background:#F6F9FC;border-radius:0 10px 10px 0;padding:13px 17px;margin:12px 0 22px;">
+  <div style="font-size:11px;color:#2775D1;font-weight:800;letter-spacing:.9px;">MONETARY EXPOSURE</div>
+  <div style="font-size:13px;line-height:1.6;color:#273D55;margin-top:5px;">Electronics accounts for almost <b>47% of fraud-tagged transaction value</b>, while Gift Cards, despite its high fraud rate, accounts for only about 2%. Fraud frequency and monetary exposure answer different questions.</div>
+</div>
+## MD: ## 17 · Boolean Features: Six Warning Signals
+
+For each of the six indicators, we compare fraud rates at `False` and `True`, along with the size of each group.
+## CODE:
+bool_rows = []
+for c in BOOL:
+    for flag in [False, True]:
+        g = train.loc[train[c] == flag, TARGET]
+        bool_rows.append({'Feature': c, 'Value': flag, 'Transaction count': len(g),
+                          'Fraud': int(g.sum()), 'Fraud rate, %': 100*g.mean()})
+bool_table = pd.DataFrame(bool_rows)
+display(bool_table.style.format({'Fraud rate, %': '{:.3f}%'}).hide(axis='index'))
+
+fig, axes = plt.subplots(3, 2, figsize=(14, 11))
+for ax, c in zip(axes.ravel(), BOOL):
+    st = bool_table[bool_table['Feature'] == c]
+    bars = ax.bar([0, 1], st['Fraud rate, %'], color=[C['blue'], C['red']], width=.48)
+    for b, r in zip(bars, st.itertuples()):
+        ax.text(b.get_x()+b.get_width()/2, b.get_height()+.20, f'{b.get_height():.2f}%\nn={r[3]:,}', ha='center', va='bottom', fontsize=9)
+    ax.set_title(c, loc='left')
+    ax.set_xticks([0, 1], ['False', 'True'])
+    ax.set_ylim(0, max(st['Fraud rate, %'])*1.35+0.2)
+    ax.grid(axis='y', alpha=.15)
+finish(fig, 'Red Flags: False vs True', 'Differences in fraud rate are associations, not evidence of causation.', top=.93)
+## MD: ## 18 · Context Matters: Fraud Flags Across Transaction Channels
+
+`billing_shipping_mismatch` is much more common in the Online channel: **2.81% of transactions**, compared with **0.32%** in other channels. Yet among transactions with this flag, the fraud rate is *lower* in Online (**12.48% vs 15.87%**). Stratifying by `merchant_category` and `auth_method` preserves the direction of the difference (pooled odds ratio approximately **0.73**).
+
+The chart on the left shows how often the flag fires; the one on the right shows fraud risk among flagged transactions. A second example, `is_ai_generated_scam_attempt`, offers a comparison: positive flags outside Online/In-App are rare, so the risk estimate there is considerably less precise. We use 95% Wilson intervals for small groups. These are differences between observed groups, not proof that the channel itself causes fraud.
+## CODE:
+from statsmodels.stats.proportion import proportion_confint
+from statsmodels.stats.contingency_tables import StratifiedTable
+
+# Compare signal prevalence (train/test) and labeled risk (train only) by channel.
+context_flags = ['billing_shipping_mismatch', 'is_ai_generated_scam_attempt']
+context_channels = ['Online', 'In-App', 'POS', 'Contactless', 'ATM']
+context_rows = []
+for flag in context_flags:
+    for channel in context_channels:
+        train_slice = train.loc[train['channel'].eq(channel)]
+        test_slice = test.loc[test['channel'].eq(channel)]
+        active = train_slice.loc[train_slice[flag].eq(True), TARGET]
+        count, positive = len(active), int(active.sum())
+        low, high = proportion_confint(positive, count, method='wilson') if count else (np.nan, np.nan)
+        context_rows.append({
+            'Flag': flag, 'Channel': channel,
+            'Train prevalence, %': 100 * train_slice[flag].mean(),
+            'Test prevalence, %': 100 * test_slice[flag].mean(),
+            'Active train rows': count, 'Fraud among active': positive,
+            'Fraud rate among active, %': 100 * positive / count if count else np.nan,
+            'CI low, %': 100 * low, 'CI high, %': 100 * high,
+        })
+context_table = pd.DataFrame(context_rows)
+
+# Control for merchant category and authentication method within flagged transactions.
+strata = []
+flagged_billing = train.loc[train['billing_shipping_mismatch'].eq(True)]
+for _, group in flagged_billing.groupby(['merchant_category', 'auth_method'], observed=True):
+    contingency = pd.crosstab(group['channel'].eq('Online'), group[TARGET]).reindex(
+        index=[False, True], columns=[0, 1], fill_value=0).to_numpy()
+    if contingency.sum(axis=1).min() > 0:
+        strata.append(contingency)
+cmh = StratifiedTable(strata)
+print('Billing/shipping mismatch · Online vs other channels, adjusted for category × auth:')
+print(f'  pooled OR = {cmh.oddsratio_pooled:.3f}; 95% CI = '
+      f'[{cmh.oddsratio_pooled_confint()[0]:.3f}, {cmh.oddsratio_pooled_confint()[1]:.3f}]; '
+      f'p = {cmh.test_null_odds().pvalue:.4g}; strata = {len(strata)}')
+display(context_table[['Flag', 'Channel', 'Active train rows',
+                       'Train prevalence, %', 'Test prevalence, %',
+                       'Fraud rate among active, %', 'CI low, %', 'CI high, %']].round(3))
+
+fig, axes = plt.subplots(2, 2, figsize=(16.5, 10.8))
+xs = np.arange(len(context_channels))
+for row, flag in enumerate(context_flags):
+    subset = context_table[context_table['Flag'].eq(flag)].set_index('Channel').reindex(context_channels)
+    ax_prev, ax_risk = axes[row]
+    ax_prev.bar(xs, subset['Train prevalence, %'], width=.58,
+                color=C['blue'] if row == 0 else C['mint'], alpha=.92, label='Train')
+    ax_prev.scatter(xs, subset['Test prevalence, %'], marker='D', s=37,
+                    color=C['gold'], edgecolor='white', linewidth=.8, zorder=4, label='Test')
+    ax_prev.set_title(('Billing / shipping mismatch' if row == 0 else 'AI scam-attempt flag') + ' · Prevalence', loc='left')
+    ax_prev.set_ylabel('Flag prevalence, %')
+    ax_prev.set_xticks(xs, context_channels)
+    ax_prev.grid(axis='y', alpha=.16)
+    if row == 0: ax_prev.legend(frameon=False, loc='upper right', fontsize=9)
+
+    p = subset['Fraud rate among active, %'].to_numpy()
+    err = np.vstack([p - subset['CI low, %'].to_numpy(), subset['CI high, %'].to_numpy() - p])
+    ax_risk.bar(xs, p, width=.58, color=C['red'] if row == 0 else C['gold'], alpha=.88)
+    ax_risk.errorbar(xs, p, yerr=err, fmt='none', ecolor=C['ink'], capsize=4, lw=1.3)
+    for j, val in enumerate(subset['Active train rows']):
+        ax_risk.text(j, max(0, p[j]-1), f'n={int(val):,}', ha='center', va='top',
+                     fontsize=8, fontweight='semibold', color='#17263C')
+    ax_risk.set_xticks(xs, context_channels)
+    ax_risk.set_ylabel('Fraud rate when flagged, %')
+    ax_risk.set_ylim(0, max(25, float(np.nanmax(subset['CI high, %'])) * 1.17))
+    ax_risk.set_title(('Billing / shipping mismatch' if row == 0 else 'AI scam-attempt flag') + ' · Conditional risk', loc='left')
+    ax_risk.grid(axis='y', alpha=.16)
+finish(fig, 'The Same Flag Can Mean Different Things Across Channels',
+       'Diamonds = test prevalence · whiskers = Wilson 95% CI · rare flags have wide intervals.', top=.90)
+
+## MD: ## 19 · Correlations Between Numerical Features
+
+Pairwise correlations help reveal features with similar information, but do not, by themselves, indicate their usefulness for classification.
+## CODE:
+corr = train[NUM].corr(method='spearman')
+fig, ax = plt.subplots(figsize=(13, 10))
+sns.heatmap(corr, cmap='RdBu_r', center=0, vmin=-1, vmax=1,
+            linewidths=.5, linecolor='white', square=True, annot=True,
+            fmt='.2f', annot_kws={'size': 8}, cbar_kws={'shrink': .75}, ax=ax)
+ax.set_title('Spearman · Numerical Features', loc='left', fontsize=13, pad=15)
+plt.tight_layout()
+plt.show()
+
+pairs = corr.where(np.triu(np.ones(corr.shape), 1).astype(bool)).stack().reset_index()
+pairs.columns = ['Feature 1', 'Feature 2', 'Spearman']
+pairs['|r|'] = pairs['Spearman'].abs()
+display(pairs.sort_values('|r|', ascending=False).head(10).round(4).reset_index(drop=True))
+## MD: <a id="risk-interactions"></a>
+
+## 20 · Multiple Flags at Once: How Much Does Risk Increase?
+
+We examine how fraud rate changes when several Boolean indicators are active simultaneously. For the most extreme combinations, it is especially important to show **the number of transactions in the group**.
+## CODE:
+risk_flags = train[BOOL].sum(axis=1).astype(int)
+flag_table = train.groupby(risk_flags)[TARGET].agg(['mean', 'sum', 'size']).reset_index()
+flag_table.columns = ['Active flags', 'Fraud rate', 'Fraud', 'Transactions']
+flag_table['Fraud rate, %'] = flag_table['Fraud rate']*100
+display(flag_table[['Active flags', 'Transactions', 'Fraud', 'Fraud rate, %']].round(3))
+
+fig, ax = plt.subplots(figsize=(11, 5))
+bars = ax.bar(flag_table['Active flags'].astype(str), flag_table['Fraud rate, %'], color=C['red'], width=.58)
+for b, n, v in zip(bars, flag_table['Transactions'], flag_table['Fraud rate, %']):
+    ax.text(b.get_x()+b.get_width()/2, v+1, f'{v:.1f}%\nn={n:,}', ha='center', fontsize=9)
+ax.set_ylim(0, max(flag_table['Fraud rate, %'])*1.20+1)
+ax.set_xlabel('Number of active flags')
+ax.set_ylabel('Fraud rate, %')
+ax.grid(axis='y', alpha=.13)
+finish(fig, 'Multiple Indicators, Much Higher Risk', 'Group sizes are shown above each bar; the most extreme groups may contain only a few rows.')
+## MD: <a id="part-ii"></a>
+<div style="border:1px solid #DCE6EE;border-left:6px solid #E85A70;background:#F7F9FC;border-radius:0 12px 12px 0;padding:18px 22px;margin:30px 0 20px;">
+  <div style="font-size:11px;letter-spacing:1.3px;font-weight:800;color:#E85A70;">PART II · FRAUD ANATOMY</div>
+  <div style="font-size:24px;font-weight:800;color:#14263B;margin-top:6px;">Anatomy of Fraudulent Transactions</div>
+  <div style="font-size:14px;line-height:1.5;color:#61758D;margin-top:6px;">What changes when risk signals appear together — or are absent altogether.</div>
+</div>
+
+<a id="fraud-anatomy"></a>
+## MD: ## 21 · Risk Concentration and Fraud Coverage
+
+A fraud-rate chart alone does not show how much fraud is found in each group. Here we calculate both **risk within the group** and **the share of all fraudulent transactions** attributable to it, for synthetic train and original.
+
+In train, transactions with no active flags account for approximately **33.1% of all fraud**. The group with three flags is much riskier per transaction, but accounts for only about **5.6% of all fraud**. We combine four or more flags for very small groups and display sample sizes.
+## CODE:
+from statsmodels.stats.proportion import proportion_confint
+
+# Aggregate the six Boolean indicators without altering either dataset.
+coverage_records = []
+for source_name, df in [('Synthetic train', train), ('Original', original)]:
+    flag_count = df[BOOL].sum(axis=1).clip(upper=4).astype(int)
+    st = df.groupby(flag_count)[TARGET].agg(['size', 'sum']).reindex(range(5), fill_value=0)
+    for flags, row in st.iterrows():
+        n, positives = int(row['size']), int(row['sum'])
+        lo, hi = proportion_confint(positives, n, method='wilson') if n else (np.nan, np.nan)
+        coverage_records.append({'Источник': source_name, 'Флагов': '4+' if flags == 4 else str(flags),
+                                 'Операций': n, 'Fraud': positives,
+                                 'Fraud rate, %': 100 * positives / n if n else np.nan,
+                                 'Доля всего fraud, %': 100 * positives / df[TARGET].sum(),
+                                 'Нижняя 95%, %': 100 * lo, 'Верхняя 95%, %': 100 * hi})
+coverage_v9 = pd.DataFrame(coverage_records)
+fig, axes = plt.subplots(1, 2, figsize=(17, 6))
+labels = ['0', '1', '2', '3', '4+']
+xx = np.arange(len(labels))
+for src, dx, color in [('Synthetic train', -.18, C['blue']), ('Original', .18, C['gold'])]:
+    sub = coverage_v9[coverage_v9['Источник'] == src].set_index('Флагов').reindex(labels)
+    axes[0].bar(xx+dx, sub['Fraud rate, %'], width=.35, color=color, label=src)
+    axes[1].bar(xx+dx, sub['Доля всего fraud, %'], width=.35, color=color, label=src)
+for ax, title, ylabel in zip(axes, ['Риск внутри группы', 'Доля всех мошеннических операций'],
+                              ['Fraud rate, %', 'Доля fraud, %']):
+    ax.set_xticks(xx, labels)
+    ax.set_xlabel('Количество активных Boolean-флагов (4+ объединены)')
+    ax.set_ylabel(ylabel)
+    ax.set_title(title, loc='left')
+    ax.grid(axis='y', alpha=.15)
+axes[0].legend(frameon=False)
+finish(fig, 'Высокий риск ≠ большой охват мошенничества',
+       'Сравнение synthetic train и original; в редких группах уровень риска оценивается неточно.', top=.85)
+display(coverage_v9.round(3).reset_index(drop=True))
+
+## MD: ## 22 · The Monetary Blind Spot of Fraud Warning Flags
+
+We previously found fraudulent transactions with none of the Boolean flags active. Now we also separate them by transaction size: below or above the 90th percentile of `amount_usd` within each dataset. Four mutually exclusive segments show both where fraud cases occur and where the value of fraud-tagged transactions is concentrated. This is a description of the data, not a proposed rule for blocking payments.
+
+## CODE:
+# Dollar-weighted coverage: four mutually exclusive segments for each labeled dataset.
+blindspot_records = []
+segment_order = ['Нижние 90% · без флагов', 'Нижние 90% · с флагами',
+                 'Верхние 10% · без флагов', 'Верхние 10% · с флагами']
+for source_name, frame in [('Train', train), ('Original', original)]:
+    high_amount = frame['amount_usd'].ge(frame['amount_usd'].quantile(0.9))
+    has_flag = frame[BOOL].any(axis=1)
+    fraud_amount = frame['amount_usd'].where(frame[TARGET].eq(1), 0.0)
+    total_cases = frame[TARGET].sum()
+    total_fraud_amount = fraud_amount.sum()
+    for is_high in [False, True]:
+        for is_flagged in [False, True]:
+            subset = high_amount.eq(is_high) & has_flag.eq(is_flagged)
+            n = int(subset.sum())
+            cases = int(frame.loc[subset, TARGET].sum())
+            name = ('Верхние 10%' if is_high else 'Нижние 90%') + (' · с флагами' if is_flagged else ' · без флагов')
+            blindspot_records.append({
+                'Датасет': source_name, 'Сегмент': name, 'Операций': n, 'Fraud': cases,
+                'Fraud rate, %': 100 * cases / n if n else np.nan,
+                'Доля fraud-случаев, %': 100 * cases / total_cases,
+                'Доля fraud-суммы, %': 100 * fraud_amount[subset].sum() / total_fraud_amount,
+            })
+blindspot_table = pd.DataFrame(blindspot_records)
+display(blindspot_table.round(2).reset_index(drop=True))
+
+fig, axes = plt.subplots(1, 2, figsize=(18.5, 7), gridspec_kw={'width_ratios': [1.2, 1]})
+y = np.arange(len(segment_order))
+for label, offset, color in [('Train', -0.18, C['blue']), ('Original', 0.18, C['gold'])]:
+    view = blindspot_table.loc[blindspot_table['Датасет'].eq(label)].set_index('Сегмент').reindex(segment_order)
+    axes[0].barh(y + offset, view['Доля fraud-суммы, %'], height=0.34, label=label, color=color)
+    axes[1].barh(y + offset, view['Fraud rate, %'], height=0.34, label=label, color=color)
+for ax, title, xlabel in zip(
+    axes,
+    ['Где находится денежный объём fraud', 'Риск внутри каждого сегмента'],
+    ['Доля всей fraud-суммы датасета, %', 'Fraud rate, %'],
+):
+    ax.set_yticks(y, segment_order if ax is axes[0] else [''] * len(segment_order))
+    ax.invert_yaxis()
+    ax.set_title(title, loc='left')
+    ax.set_xlabel(xlabel)
+    ax.grid(axis='x', alpha=0.17)
+axes[0].legend(frameon=False)
+finish(fig, 'Когда предупреждающие флаги не видят денежный масштаб',
+       'Верхние 10% определены по сумме операции отдельно для train и original.', top=0.82)
+
+## MD: <div style="border-left:4px solid #13A99B;background:#F1F8F7;border-radius:0 10px 10px 0;padding:14px 18px;margin:12px 0 22px;">
+  <div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#117E77;">HIDDEN MONETARY EXPOSURE</div>
+  <div style="font-size:14px;line-height:1.65;color:#193D3C;margin-top:5px;">In train, large transactions <b>with none of the six Boolean flags active</b> account for 686 fraud cases and approximately <b>$344,600</b> in fraud-tagged transaction value — <b>26.7% of all fraud-tagged dollars</b>. In original, this segment contains only nine fraud cases, so comparisons between the two datasets require caution.</div>
+</div>
+
+## MD: ## 23 · Hidden Fraud Profiles Without Active Flags
+
+In train, **3,870 fraudulent transactions** have none of the six Boolean flags. But this "no flags" group is far from homogeneous: repeated CVV attempts and the absence of authentication identify transactions with substantially higher risk.
+
+We divide these transactions into **four mutually exclusive profiles** to avoid adding overlapping groups. We show each profile's fraud rate, size, and contribution to fraud among transactions without flags.
+## CODE:
+zero_profiles = []
+for source_name, df in [('Synthetic train', train), ('Original', original)]:
+    no_flags = df.loc[~df[BOOL].any(axis=1)].copy()
+    no_auth = no_flags['auth_method'].eq('No Authentication')
+    retries = no_flags['cvv_retry_count'].ge(1)
+    no_flags['Профиль'] = np.select(
+        [no_auth & retries, no_auth & ~retries, ~no_auth & retries],
+        ['Без авторизации · CVV ≥ 1', 'Без авторизации · CVV = 0',
+         'Есть авторизация · CVV ≥ 1'],
+        default='Есть авторизация · CVV = 0')
+    st = no_flags.groupby('Профиль')[TARGET].agg(['size', 'sum'])
+    for profile, v in st.iterrows():
+        zero_profiles.append({'Источник': source_name, 'Профиль': profile,
+                              'Операций': int(v['size']), 'Fraud': int(v['sum']),
+                              'Fraud rate, %': 100*v['sum']/v['size'],
+                              'Доля fraud без флагов, %': 100*v['sum']/no_flags[TARGET].sum()})
+zero_v9 = pd.DataFrame(zero_profiles)
+order = ['Без авторизации · CVV ≥ 1', 'Без авторизации · CVV = 0',
+         'Есть авторизация · CVV ≥ 1', 'Есть авторизация · CVV = 0']
+fig, axes = plt.subplots(1, 2, figsize=(18, 6.6))
+yy = np.arange(4)
+for src, shift, color in [('Synthetic train', -.19, C['blue']), ('Original', .19, C['gold'])]:
+    st = zero_v9[zero_v9['Источник']==src].set_index('Профиль').reindex(order)
+    axes[0].barh(yy+shift, st['Fraud rate, %'], height=.36, color=color, label=src)
+    axes[1].barh(yy+shift, st['Доля fraud без флагов, %'], height=.36, color=color, label=src)
+for ax, xlabel in zip(axes, ['Fraud rate, %', 'Доля fraud внутри операций без флагов, %']):
+    ax.set_yticks(yy, order if ax is axes[0] else ['']*4)
+    ax.invert_yaxis()
+    ax.set_xlabel(xlabel)
+    ax.grid(axis='x', alpha=.15)
+axes[0].legend(frameon=False, fontsize=9)
+axes[0].set_title('Риск', loc='left')
+axes[1].set_title('Охват мошенничества', loc='left')
+finish(fig, 'Без Boolean-флагов · четыре разных профиля',
+       'В каждой паре столбцов сравниваются synthetic train и original.', top=.84)
+display(zero_v9.sort_values(['Источник', 'Fraud rate, %'], ascending=[True,False]).round(3).reset_index(drop=True))
+
+## MD: <div style="border-left:4px solid #E85A70;background:#F6F9FC;border-radius:0 10px 10px 0;padding:13px 17px;margin:12px 0 22px;">
+  <div style="font-size:11px;color:#E85A70;font-weight:800;letter-spacing:.9px;">THE FLAGS’ BLIND SPOT</div>
+  <div style="font-size:13px;line-height:1.6;color:#273D55;margin-top:5px;">About <b>one-third of fraudulent transactions</b> in train have none of the six Boolean flags. Yet some narrow segments within this group have sharply elevated risk.</div>
+</div>
+## MD: ## 24 · Merchant Risk × Repeated CVV Attempts
+
+We examine how a high `merchant_risk_score` combines with repeated CVV failures, displaying a matrix of observed risk and the number of transactions in each cell.
+## CODE:
+merchant_bins = pd.qcut(train['merchant_risk_score'], 5, labels=['Very low', 'Low', 'Medium', 'High', 'Very high'], duplicates='drop')
+cvv = train['cvv_retry_count'].clip(upper=3).astype(str)
+ct = pd.DataFrame({'merchant': merchant_bins, 'cvv': cvv, 'y': train[TARGET]})
+heat = ct.pivot_table(index='merchant', columns='cvv', values='y', aggfunc='mean', observed=True)*100
+counts = ct.pivot_table(index='merchant', columns='cvv', values='y', aggfunc='size', observed=True)
+heat = heat.reindex(['Very low', 'Low', 'Medium', 'High', 'Very high'])
+counts = counts.reindex(heat.index)
+labels = heat.copy().astype(object)
+for i in range(heat.shape[0]):
+    for j in range(heat.shape[1]):
+        labels.iloc[i, j] = f'{heat.iloc[i, j]:.1f}%\nn={counts.iloc[i, j]:,.0f}' if pd.notna(heat.iloc[i, j]) else '—'
+fig, ax = plt.subplots(figsize=(11, 6))
+sns.heatmap(heat, annot=labels, fmt='', cmap='YlOrRd', vmin=0,
+            linewidths=1, linecolor='white', ax=ax, annot_kws={'size': 9},
+            cbar_kws={'label': 'Fraud rate, %'})
+ax.set_xlabel('CVV retries (3 = 3 or more)')
+ax.set_ylabel('Merchant risk · quintiles')
+finish(fig, 'Two Signals Together: Merchant Risk × CVV Retries', 'Each cell shows fraud rate and group size; extreme cells require careful interpretation.', top=.88)
+## MD: ## 25 · Authentication Method × CVV Attempts
+
+Risk varies substantially even within a single authentication method. In train, `No Authentication` has a fraud rate of approximately **3.64% at CVV = 0**, **28.33% at CVV = 1**, and **72.57% at CVV = 2**. The last group is small, with 401 transactions.
+
+We compare this pattern with original. For stability, we combine three or more attempts with two (`2+`) and label each group's size.
+## CODE:
+auth_cvv_frames = []
+methods = ['No Authentication', '3D Secure', 'OTP', 'PIN', 'Biometric']
+for source_name, df in [('Synthetic train', train), ('Original', original)]:
+    x = df[['auth_method', 'cvv_retry_count', TARGET]].copy()
+    x['CVV'] = x['cvv_retry_count'].clip(upper=2).astype(str).replace({'2':'2+'})
+    st = x.groupby(['auth_method','CVV'])[TARGET].agg(['size', 'sum']).reset_index()
+    st['Источник'] = source_name
+    st['Fraud rate, %'] = st['sum']/st['size']*100
+    auth_cvv_frames.append(st)
+auth_cvv_v9 = pd.concat(auth_cvv_frames, ignore_index=True)
+fig, axes = plt.subplots(1, 2, figsize=(17, 6.2), sharey=True)
+for ax, source_name in zip(axes, ['Synthetic train', 'Original']):
+    st = auth_cvv_v9[auth_cvv_v9['Источник']==source_name]
+    rate = st.pivot(index='auth_method',columns='CVV',values='Fraud rate, %').reindex(index=methods, columns=['0','1','2+'])
+    counts = st.pivot(index='auth_method',columns='CVV',values='size').reindex(index=methods, columns=['0','1','2+'])
+    annot = rate.astype(object)
+    for i in range(len(methods)):
+        for j in range(3):
+            annot.iloc[i,j] = f'{rate.iloc[i,j]:.1f}%\nn={counts.iloc[i,j]:,.0f}' if pd.notna(rate.iloc[i,j]) else '—'
+    sns.heatmap(rate, ax=ax, annot=annot, fmt='', cmap='YlOrRd', vmin=0, vmax=80,
+                linewidths=1, linecolor='white', annot_kws={'fontsize':9},
+                cbar=ax is axes[1], cbar_kws={'label':'Fraud rate, %'})
+    ax.set_title(source_name, loc='left')
+    ax.set_xlabel('Число попыток CVV')
+    ax.set_ylabel('Авторизация' if ax is axes[0] else '')
+finish(fig, 'Авторизация × CVV: одна и та же операция — разный профиль риска',
+       'Ячейки: доля fraud и n; шкала риска одна для двух датасетов.', top=.84)
+display(auth_cvv_v9.sort_values(['Источник','Fraud rate, %'], ascending=[True,False]).round(3).reset_index(drop=True))
+
+## MD: ## 26 · Purchase Category × Authentication
+
+The same authentication method behaves differently across purchase categories. In train, `Gift Cards × No Authentication` and `Gaming × No Authentication` have fraud rates of approximately **23.0%** and **19.1%**, based on 1,104 and 2,629 transactions, respectively.
+
+We show two heatmaps: **risk within each combination** and **the number of fraudulent transactions** it contains. This separates rare, high-risk segments from segments that account for most fraud cases.
+## CODE:
+cat_auth = train.groupby(['merchant_category','auth_method'])[TARGET].agg(['size','sum']).reset_index()
+cat_auth['Fraud rate, %'] = 100*cat_auth['sum']/cat_auth['size']
+cat_order = train['merchant_category'].value_counts().index.tolist()
+method_order = ['No Authentication', '3D Secure', 'OTP', 'PIN', 'Biometric']
+rate_mat = cat_auth.pivot(index='merchant_category', columns='auth_method', values='Fraud rate, %').reindex(index=cat_order,columns=method_order)
+n_mat = cat_auth.pivot(index='merchant_category', columns='auth_method', values='size').reindex(index=cat_order,columns=method_order)
+fraud_mat = cat_auth.pivot(index='merchant_category', columns='auth_method', values='sum').reindex(index=cat_order,columns=method_order)
+fig, axes = plt.subplots(1, 2, figsize=(19, 8))
+labels = rate_mat.astype(object)
+for i in range(rate_mat.shape[0]):
+    for j in range(rate_mat.shape[1]):
+        labels.iloc[i,j] = f'{rate_mat.iloc[i,j]:.1f}%\nn={n_mat.iloc[i,j]:,.0f}'
+sns.heatmap(rate_mat, annot=labels, fmt='', ax=axes[0], cmap='YlOrRd', linewidths=.5,
+            linecolor='white', annot_kws={'fontsize':7}, cbar_kws={'label':'Fraud rate, %'})
+sns.heatmap(fraud_mat, annot=True, fmt='.0f', ax=axes[1], cmap='Blues', linewidths=.5,
+            linecolor='white', annot_kws={'fontsize':8}, cbar_kws={'label':'Количество fraud'})
+axes[0].set_title('Риск внутри сочетания',loc='left')
+axes[1].set_title('Абсолютное количество fraud',loc='left')
+for ax in axes:
+    ax.set_ylabel('Категория мерчанта' if ax is axes[0] else '')
+    ax.set_xlabel('Способ авторизации')
+    ax.tick_params(axis='x',rotation=30,labelsize=8)
+    ax.tick_params(axis='y',labelsize=9)
+finish(fig, 'Категория × авторизация: риск и масштаб не одно и то же',
+       'Одна и та же группа может быть первой по риску и далеко не первой по охвату мошенничества.',top=.87)
+display(cat_auth[cat_auth['size']>=1000].sort_values('Fraud rate, %',ascending=False).head(15).round(3).reset_index(drop=True))
+
+## MD: ## 27 · Interaction Atlas: Risk Beyond a Baseline Expectation
+
+A high fraud rate for a combination of two features does not necessarily indicate an interaction. We compare observed risk with **a baseline that assumes no pairwise interaction**: expected risk is derived from the log-odds of the individual features and the overall fraud rate. The heatmaps show the ratio of *observed* to *expected* risk.
+
+**1.00×** indicates agreement with the baseline; **above 1.00×** indicates additional risk relative to that baseline. Each cell displays its group size; groups that are too small are hidden. This is a descriptive check, not a formal test of interaction.
+## CODE:
+# Additive-log-odds reference: logit(p_ab) ~= logit(p_a) + logit(p_b) - logit(p_all).
+def _smooth_p(pos, total):
+    return (pos + .5) / (total + 1.)
+
+def _logit(p):
+    p = np.clip(p, 1e-8, 1 - 1e-8)
+    return np.log(p / (1 - p))
+
+def _atlas_matrix(df, row, col, min_count, min_fraud):
+    data = pd.DataFrame({'row': row, 'col': col, 'y': df[TARGET].astype('int8')}).dropna(subset=['row', 'col'])
+    rows = sorted(data['row'].unique())
+    cols = sorted(data['col'].unique())
+    base = _smooth_p(data['y'].sum(), len(data))
+    rstats = data.groupby('row', observed=True)['y'].agg(['sum','size'])
+    cstats = data.groupby('col', observed=True)['y'].agg(['sum','size'])
+    joint = data.groupby(['row','col'], observed=True)['y'].agg(['sum','size'])
+    lift = pd.DataFrame(np.nan, index=rows, columns=cols)
+    annotations = pd.DataFrame('', index=rows, columns=cols)
+    for (r,c), rec in joint.iterrows():
+        n, pos = int(rec['size']), int(rec['sum'])
+        if n < min_count or pos < min_fraud:
+            annotations.loc[r,c] = f'n={n:,}\ninsufficient data'
+            continue
+        pr = _smooth_p(rstats.loc[r,'sum'], rstats.loc[r,'size'])
+        pc = _smooth_p(cstats.loc[c,'sum'], cstats.loc[c,'size'])
+        expected = 1 / (1 + np.exp(-(_logit(pr) + _logit(pc) - _logit(base))))
+        observed = _smooth_p(pos, n)
+        ratio = observed / expected
+        lift.loc[r,c] = np.log2(max(ratio, 1e-8))
+        annotations.loc[r,c] = f'{ratio:.2f}×\nn={n:,}'
+    return lift.astype(float), annotations
+
+quantile = lambda x: pd.qcut(x, q=5, labels=False, duplicates='drop').map(lambda v: f'Q{int(v)+1}' if pd.notna(v) else np.nan)
+cvv_bucket = train['cvv_retry_count'].clip(upper=3).map(lambda v: '3+' if v >= 3 else str(int(v)))
+pairs_atlas = [
+    ('Merchant risk × CVV retries', quantile(train['merchant_risk_score']), cvv_bucket),
+    ('Velocity × hours since last txn', quantile(train['velocity_score']), quantile(train['hours_since_last_txn'])),
+    ('VPN × IP country mismatch', train['used_vpn'].map({False:'No', True:'Yes'}),
+     train['ip_country_mismatch'].map({False:'No', True:'Yes'})),
+]
+min_n = min(200, max(5, len(train) // 1500))
+min_frauds = 5 if int(train[TARGET].sum()) > 200 else 1
+fig, axes = plt.subplots(1, 3, figsize=(19, 6.2), gridspec_kw={'width_ratios':[1.08,1.08,.84]})
+for i, (ax, (name, rows, cols)) in enumerate(zip(axes, pairs_atlas)):
+    values, notes = _atlas_matrix(train, rows, cols, min_n, min_frauds)
+    sns.heatmap(values, ax=ax, cmap='RdBu_r', vmin=-1.3, vmax=1.3, center=0,
+                linewidths=1, linecolor=C['white'], square=False, annot=notes.to_numpy(), fmt='',
+                cbar=i==2, cbar_kws={'label':'log₂(observed / expected)', 'shrink':.65},
+                annot_kws={'size': 8})
+    ax.set_title(name, loc='left', fontsize=10, fontweight='bold')
+    ax.set_xlabel('Feature B')
+    ax.set_ylabel('Feature A' if i==0 else '')
+    ax.tick_params(axis='x', rotation=0)
+    ax.tick_params(axis='y', rotation=0)
+finish(fig, 'Fraud Risk Synergy Atlas · Where Does Risk Exceed Expectations?',
+       f'Reference: additive log-odds; cells with n < {min_n} or fraud < {min_frauds} excluded.', top=.83)
+## MD: <a id="train-vs-test"></a>
+
+## 28 · Distribution Shift Between Train and Test
+
+We assess how closely input-feature distributions match between train and test. For numerical features, we use the Kolmogorov–Smirnov statistic (KS); for categorical and Boolean features, we use Jensen–Shannon distance.
+## CODE:
+drift_rows = []
+for c in NUM:
+    ks = ks_2samp(train[c], test[c], method='asymp').statistic
+    drift_rows.append([c, 'numeric', 'KS', ks])
+for c in CAT + BOOL:
+    a = train[c].value_counts(normalize=True)
+    b = test[c].value_counts(normalize=True)
+    idx = a.index.union(b.index)
+    js = jensenshannon(a.reindex(idx, fill_value=0), b.reindex(idx, fill_value=0), base=2)
+    drift_rows.append([c, 'category/boolean', 'JS distance', js])
+drift = pd.DataFrame(drift_rows, columns=['Feature', 'Type', 'Metric', 'Value'])
+display(drift.sort_values(['Type', 'Value'], ascending=[True, False]).round(5).reset_index(drop=True))
+
+fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+for ax, part, kind, color in [(axes[0], drift[drift['Metric']=='KS'], 'Numerical · KS', C['blue']),
+                               (axes[1], drift[drift['Metric']=='JS distance'], 'Categories / flags · JS', C['mint'])]:
+    s = part.sort_values('Value')
+    ax.barh(s['Feature'], s['Value'], color=color, height=.7)
+    ax.set_title(kind, loc='left')
+    ax.set_xlabel('Distance between train and test')
+    ax.grid(axis='x', alpha=.18)
+finish(fig, 'Train/Test Distribution Shift', 'KS and JS have different meanings and scales; their numerical values should not be compared across panels.', top=.88)
+## MD: ## 29 · Joint Train/Test Shift: Feature Pairs
+
+Similar marginal distributions do not guarantee similar joint distributions. We examine eight pairs of categorical and Boolean features using **JS distance between their full joint frequency tables**.
+
+Initial calculations show very small train/test distances for these pairs (approximately **0.002–0.008**), while train/original distances are much larger. This metric also reflects changes in marginal frequencies; it does not isolate the strength of association between the two features.
+## CODE:
+from scipy.spatial.distance import jensenshannon
+
+joint_pairs = [
+    ('merchant_category','auth_method'), ('merchant_category','channel'),
+    ('channel','device_type'), ('auth_method','cvv_retry_count'),
+    ('merchant_category','is_new_merchant'),
+    ('merchant_category','is_ai_generated_scam_attempt'),
+    ('is_foreign_transaction','ip_country_mismatch'), ('is_new_merchant','used_vpn')]
+
+def pair_js(df_a, df_b, col_a, col_b):
+    # Align every combination before comparing joint probability distributions.
+    p = df_a.groupby([col_a,col_b],dropna=False).size()
+    q = df_b.groupby([col_a,col_b],dropna=False).size()
+    universe = p.index.union(q.index)
+    p = p.reindex(universe,fill_value=0).to_numpy(dtype=float)
+    q = q.reindex(universe,fill_value=0).to_numpy(dtype=float)
+    return float(jensenshannon(p/p.sum(),q/q.sum(),base=2))
+
+joint_rows = []
+for a,b in joint_pairs:
+    joint_rows.append({'Пара':f'{a} × {b}',
+                       'Train/Test JS':pair_js(train,test,a,b),
+                       'Train/Original JS':pair_js(train,original,a,b)})
+joint_v9 = pd.DataFrame(joint_rows).sort_values('Train/Original JS')
+fig, ax = plt.subplots(figsize=(14.3,7.0))
+yy=np.arange(len(joint_v9))
+ax.barh(yy-.19,joint_v9['Train/Test JS'],height=.35,color=C['blue'],label='Train/Test')
+ax.barh(yy+.19,joint_v9['Train/Original JS'],height=.35,color=C['gold'],label='Train/Original')
+ax.set_yticks(yy,joint_v9['Пара'],fontsize=8)
+ax.set_xlabel('Jensen–Shannon distance, base 2')
+ax.legend(frameon=False)
+ax.grid(axis='x',alpha=.15)
+finish(fig,'Сдвиг отдельных признаков и их сочетаний — разные вопросы',
+       'Сравниваются полные совместные распределения выбранных пар, без target.',top=.86)
+display(joint_v9.sort_values('Train/Test JS',ascending=False).round(5).reset_index(drop=True))
+
+## MD: <div style="border-left:4px solid #13A99B;background:#F6F9FC;border-radius:0 10px 10px 0;padding:13px 17px;margin:12px 0 22px;">
+  <div style="font-size:11px;color:#13A99B;font-weight:800;letter-spacing:.9px;">STABILITY OF THE SYNTHETIC SPLITS</div>
+  <div style="font-size:13px;line-height:1.6;color:#273D55;margin-top:5px;">Across the examined feature pairs, train and test have similar joint distributions; the gap to original is much larger. This is <b>evidence of similarity between the synthetic splits</b>, not a guarantee that every dependency is identical.</div>
+</div>
+## MD: <a id="part-iii"></a>
+<div style="border:1px solid #DCE6EE;border-left:6px solid #13A99B;background:#F7F9FC;border-radius:0 12px 12px 0;padding:18px 22px;margin:30px 0 20px;">
+  <div style="font-size:11px;letter-spacing:1.3px;font-weight:800;color:#13A99B;">PART III · SYNTHETIC DATA DETECTIVE</div>
+  <div style="font-size:24px;font-weight:800;color:#14263B;margin-top:6px;">Traces of Synthetic Generation</div>
+  <div style="font-size:14px;line-height:1.5;color:#61758D;margin-top:6px;">Distributions, feature dependencies, and exact matches with the original dataset.</div>
+</div>
+## MD: <a id="original-data"></a>
+
+## 30 · How Similar Is Original to Synthetic Train?
+
+For each numerical feature, we compare train–test and train–original using random samples of equal size. A substantial difference from original indicates **distribution shift**, but does not tell us whether original rows were used in the generation process.
+## CODE:
+original_ks = []
+for c in NUM:
+    synth = train[c].sample(20000, random_state=SEED)
+    original_ks.append([c, ks_2samp(synth, test[c].sample(20000, random_state=SEED)).statistic,
+                        ks_2samp(synth, original[c]).statistic])
+original_ks = pd.DataFrame(original_ks, columns=['Feature', 'KS train/test', 'KS train/original'])
+display(original_ks.sort_values('KS train/original', ascending=False).round(5).reset_index(drop=True))
+
+ss = original_ks.sort_values('KS train/original')
+fig, ax = plt.subplots(figsize=(12, 7))
+y = np.arange(len(ss))
+ax.barh(y-.2, ss['KS train/test'], height=.38, color=C['blue'], label='Train / Test')
+ax.barh(y+.2, ss['KS train/original'], height=.38, color=C['gold'], label='Train / Original')
+ax.set_yticks(y, ss['Feature'])
+ax.set_xlabel('KS distance')
+ax.legend(frameon=False)
+ax.grid(axis='x', alpha=.18)
+finish(fig, 'Synthetic Train/Test Are Similar; Original Often Differs', 'KS is computed on comparable random samples of 20,000 observations.')
+## MD: ## 31 · How Have Numerical Feature Dependencies Changed?
+
+Feature distributions can appear similar even when relationships between features differ. We compare Spearman correlations in train, test, and original across **all 78 pairs of the 13 numerical features**. The largest gap concerns `hours_since_last_txn × velocity_score`: approximately **−0.445 in synthetic** versus **−0.355 in original**.
+
+We check whether the effect repeats in test and estimate the uncertainty of the difference using bootstrap resampling of equally sized 20,000-row samples. We also examine how median `velocity_score` varies across transaction-time intervals. A change in correlation indicates a change in statistical dependence; it does not, by itself, identify the cause or imply that the generator deliberately altered this pair.
+## CODE:
+from itertools import combinations
+
+# Compare each pair on the same rank-correlation definition.
+dep_corr = {name: df[NUM].corr(method='spearman') for name, df in [
+    ('Train', train), ('Test', test), ('Original', original)]}
+dep_rows = []
+for a, b in combinations(NUM, 2):
+    r_tr, r_te, r_or = [dep_corr[name].loc[a, b] for name in ('Train', 'Test', 'Original')]
+    dep_rows.append({'Pair': f'{a} × {b}', 'Train rho': r_tr,
+                     'Test rho': r_te, 'Original rho': r_or,
+                     'Delta Train-Original': r_tr - r_or,
+                     '|Delta|': abs(r_tr-r_or)})
+dep_table = pd.DataFrame(dep_rows).sort_values('|Delta|', ascending=False).reset_index(drop=True)
+print(f'Numeric pairs compared: {len(dep_table)}')
+display(dep_table.head(10).round(4).drop(columns='|Delta|'))
+
+# Bootstrap two equal-size samples for the largest observed gap; other pairs are exploratory.
+rng_dep = np.random.default_rng(SEED)
+cols_dep = ['hours_since_last_txn', 'velocity_score']
+train_dep = train[cols_dep].sample(n=20_000, random_state=SEED).to_numpy()
+original_dep = original[cols_dep].to_numpy()
+gap_samples = []
+for _ in range(180):
+    i_tr = rng_dep.integers(0, len(train_dep), size=len(train_dep))
+    i_or = rng_dep.integers(0, len(original_dep), size=len(original_dep))
+    tr_rho = spearmanr(train_dep[i_tr, 0], train_dep[i_tr, 1]).statistic
+    or_rho = spearmanr(original_dep[i_or, 0], original_dep[i_or, 1]).statistic
+    gap_samples.append(tr_rho - or_rho)
+gap_ci = np.quantile(gap_samples, [0.025, 0.975])
+print(f'Largest gap (Train - Original): {dep_table.loc[0, "Delta Train-Original"]:+.4f}')
+print(f'Bootstrap 95% interval on 20k/20k matched samples: [{gap_ci[0]:+.4f}, {gap_ci[1]:+.4f}]')
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(17.5, 7.2), gridspec_kw={'width_ratios': [1.1, 1]})
+top = dep_table.head(7).iloc[::-1]
+y = np.arange(len(top))
+ax1.scatter(top['Original rho'], y, s=65, color=C['gold'], zorder=3, label='Original')
+ax1.scatter(top['Train rho'], y, s=65, color=C['blue'], zorder=3, label='Synthetic train')
+for j, (_, row) in enumerate(top.iterrows()):
+    ax1.plot([row['Original rho'], row['Train rho']], [j, j],
+             color='#AFC0D2', lw=2.5, zorder=1)
+ax1.set_yticks(y, top['Pair'].str.replace(' × ', '\n× ', regex=False))
+ax1.tick_params(axis='y', labelsize=8)
+ax1.axvline(0, color=C['grid'], lw=1)
+ax1.set_xlabel('Spearman rho')
+ax1.set_title('Largest pairwise dependency shifts', loc='left')
+ax1.legend(frameon=False, fontsize=9)
+ax1.grid(axis='x', alpha=.13)
+
+# Use the original time quantiles as fixed bins for all three datasets.
+quantiles = np.quantile(original['hours_since_last_txn'], np.linspace(.1, .9, 9))
+edges = np.r_[-np.inf, np.unique(quantiles), np.inf]
+for label, frame, color, marker in [('Original', original, C['gold'], 'o'),
+                                     ('Synthetic train', train, C['blue'], 's'),
+                                     ('Synthetic test', test, C['mint'], '^')]:
+    bucket = pd.cut(frame['hours_since_last_txn'], bins=edges)
+    median = frame.groupby(bucket, observed=False)['velocity_score'].median().to_numpy()
+    ax2.plot(np.arange(len(median)), median, color=color, marker=marker,
+             lw=2.1, markersize=5.5, label=label)
+ax2.set_xticks(np.arange(len(edges)-1), [str(i+1) for i in range(len(edges)-1)])
+ax2.set_xlabel('Time-since-last-transaction bin (original deciles)')
+ax2.set_ylabel('Median velocity_score')
+ax2.set_title('Risk-speed profile across fixed time bins', loc='left')
+ax2.grid(axis='y', alpha=.15)
+ax2.legend(frameon=False, fontsize=9)
+finish(fig, 'Synthetic Dependencies: Similar Variables, Different Relationships',
+       '78 Spearman pairs; displayed gaps are exploratory. The time bins are fixed using original quantiles.', top=.87)
+
+## MD: ## 32 · Where Did the Relationship with the Target Change?
+
+A feature can retain its meaning while its ability to distinguish fraudulent from legitimate transactions changes. We compare **univariate AUC** between original and synthetic train.
+## CODE:
+target_drift = []
+for c in NUM:
+    auc_s = roc_auc_score(train[TARGET], train[c])
+    auc_o = roc_auc_score(original[TARGET], original[c])
+    target_drift.append([c, max(auc_s, 1-auc_s), max(auc_o, 1-auc_o)])
+target_drift = pd.DataFrame(target_drift, columns=['Feature', 'AUC train', 'AUC original'])
+target_drift['Difference'] = target_drift['AUC train'] - target_drift['AUC original']
+display(target_drift.sort_values('Difference', key=abs, ascending=False).round(5).reset_index(drop=True))
+
+fig, ax = plt.subplots(figsize=(12, 6))
+y = np.arange(len(target_drift))
+ax.scatter(target_drift['AUC train'], y, color=C['blue'], s=55, label='Train', zorder=3)
+ax.scatter(target_drift['AUC original'], y, color=C['gold'], s=55, label='Original', zorder=3)
+for i, row in target_drift.iterrows():
+    ax.plot([row['AUC train'], row['AUC original']], [i, i], color=C['grid'], linewidth=2)
+ax.set_yticks(y, target_drift['Feature'])
+ax.set_xlabel('Univariate AUC · best direction')
+ax.legend(frameon=False)
+ax.grid(axis='x', alpha=.13)
+finish(fig, 'How Did Generation Change the Individual Signal?', 'The effect in original may be noisy: it contains only 339 fraud cases.', top=.87)
+## MD: ## 33 · How Reliable Are Differences in Univariate AUC?
+
+When comparing synthetic train and original, we cannot independently choose whichever AUC direction is higher in each dataset. Here, **the direction is fixed using train** and then applied unchanged to original. For original, we show approximate 95% intervals from 150 stratified bootstrap resamples.
+
+## CODE:
+orig_y = original[TARGET].astype(int).to_numpy()
+orig_pos = np.flatnonzero(orig_y == 1)
+orig_neg = np.flatnonzero(orig_y == 0)
+rng_auc = np.random.default_rng(SEED + 18)
+boot_repeats = 150
+# The same class-stratified bootstrap draws are reused across all features.
+boot_idx = [np.concatenate([rng_auc.choice(orig_pos, len(orig_pos), replace=True),
+                            rng_auc.choice(orig_neg, len(orig_neg), replace=True)])
+            for _ in range(boot_repeats)]
+auc_ci = []
+for feature in NUM:
+    train_auc_raw = roc_auc_score(train[TARGET], train[feature])
+    direction = 1 if train_auc_raw >= .5 else -1
+    raw_original = original[feature].to_numpy(dtype=float) * direction
+    point_original = roc_auc_score(orig_y, raw_original)
+    boot = [roc_auc_score(orig_y[idx], raw_original[idx]) for idx in boot_idx]
+    lo, hi = np.quantile(boot, [.025,.975])
+    auc_ci.append({'feature':feature, 'train_auc':max(train_auc_raw,1-train_auc_raw),
+                   'original_auc_fixed':point_original, 'low':lo, 'high':hi,
+                   'difference':max(train_auc_raw,1-train_auc_raw)-point_original})
+auc_ci = pd.DataFrame(auc_ci).sort_values('difference', key=abs).reset_index(drop=True)
+fig, ax = plt.subplots(figsize=(12.5, 7.2))
+yy = np.arange(len(auc_ci))
+ax.hlines(yy, auc_ci['train_auc'], auc_ci['original_auc_fixed'], color=C['grid'], linewidth=2, zorder=1)
+ax.errorbar(auc_ci['original_auc_fixed'], yy,
+            xerr=np.vstack([auc_ci['original_auc_fixed']-auc_ci['low'], auc_ci['high']-auc_ci['original_auc_fixed']]),
+            fmt='o', color=C['gold'], elinewidth=1.6, capsize=3, ms=6,
+            label='Original · 95% bootstrap CI', zorder=3)
+ax.scatter(auc_ci['train_auc'], yy, c=C['blue'], s=46, label='Synthetic train', zorder=4)
+ax.axvline(.5, color=C['muted'], lw=1, ls='--')
+ax.set_yticks(yy, auc_ci['feature'])
+ax.invert_yaxis()
+ax.set_xlabel('ROC AUC · feature direction fixed on train')
+ax.set_xlim(max(.36, min(auc_ci['low'].min(),.48)-.02), min(.92,max(auc_ci['high'].max(),auc_ci['train_auc'].max())+.06))
+ax.grid(axis='x', alpha=.13)
+ax.legend(loc='lower right', frameon=False)
+finish(fig, 'Univariate Signal · Differences and Uncertainty',
+       f'Original contains {len(orig_pos):,} fraud and {len(orig_neg):,} non-fraud rows; 150 stratified bootstrap resamples.', top=.88)
+display(auc_ci.round(4).rename(columns={'feature':'Feature','train_auc':'Train AUC',
+    'original_auc_fixed':'Original AUC', 'low':'CI low', 'high':'CI high', 'difference':'Δ AUC'}))
+## MD: ## 34 · The Disappearing Time Signal: Transaction Hour
+
+In original, the fraud rate between 00:00 and 05:59 is **2.76%**, noticeably higher than during the day. In synthetic train, nighttime transactions have a fraud rate of around **1.66%**, almost the same as transactions at other times.
+
+Original is too small for a smooth hour-by-hour curve, so we focus our interpretation on **four six-hour intervals**. We show Wilson 95% intervals, group sizes, and a separate χ² test of association with time of day.
+## CODE:
+from scipy.stats import chi2_contingency
+from statsmodels.stats.proportion import proportion_confint
+
+time_blocks = [(0,5,'00–06'),(6,11,'06–12'),(12,17,'12–18'),(18,23,'18–24')]
+time_rows=[]
+for name,df in [('Synthetic train',train),('Original',original)]:
+    for low,high,label in time_blocks:
+        y=df.loc[df['time_of_day_hour'].between(low,high),TARGET]
+        n,k=len(y),int(y.sum())
+        lo,hi=proportion_confint(k,n,method='wilson')
+        time_rows.append({'Источник':name,'Время':label,'Операций':n,'Fraud':k,
+                          'Fraud rate, %':100*k/n,'CI low, %':100*lo,'CI high, %':100*hi})
+time_v9=pd.DataFrame(time_rows)
+fig,axes=plt.subplots(1,2,figsize=(17,6))
+xx=np.arange(4)
+for name,color,dx in [('Synthetic train',C['blue'],-.18),('Original',C['gold'],.18)]:
+    sub=time_v9[time_v9['Источник']==name]
+    axes[0].bar(xx+dx,sub['Fraud rate, %'],width=.35,color=color,label=name)
+    means=sub['Fraud rate, %'].to_numpy()
+    errors=np.array([means-sub['CI low, %'].to_numpy(), sub['CI high, %'].to_numpy()-means])
+    axes[0].errorbar(xx+dx,means,yerr=errors,fmt='none',ecolor=C['ink'],capsize=3,lw=1)
+    axes[1].plot(xx,means,marker='o',lw=2,color=color,label=name)
+axes[0].set_xticks(xx,[x[2] for x in time_blocks]);axes[1].set_xticks(xx,[x[2] for x in time_blocks])
+axes[0].set_title('Риск и 95% интервалы',loc='left')
+axes[1].set_title('Форма временного профиля',loc='left')
+for ax in axes:
+    ax.set_ylabel('Fraud rate, %')
+    ax.set_xlabel('Время суток')
+    ax.grid(axis='y',alpha=.15)
+axes[0].legend(frameon=False)
+finish(fig,'Ночной риск в original и почти плоский профиль в synthetic',
+       'Интервалы помогают отличить устойчивую структуру от случайных колебаний малой выборки.',top=.84)
+display(time_v9.round(3).reset_index(drop=True))
+for name,df in [('Synthetic train',train),('Original',original)]:
+    hours=pd.cut(df['time_of_day_hour'],bins=[-1,5,11,17,23],labels=[t[2] for t in time_blocks])
+    chi2,p,_,_=chi2_contingency(pd.crosstab(hours,df[TARGET]))
+    print(f'{name}: χ² = {chi2:.2f}, p = {p:.4g} (время суток × fraud)')
+
+## MD: ## 35 · The Amplified Age Gradient
+
+In synthetic train, the increase in fraud rate with age is more pronounced than in original. For ages **18–25**, the rates are approximately **0.41%** versus **1.44%** in original; for ages **66+**, they are about **2.67%** versus **2.09%**.
+
+The point estimates alone do not tell the whole story: original has only 339 fraudulent transactions in total. We therefore show positive-case counts and 95% intervals for each age group. Differences cannot be attributed to the generator without accounting for uncertainty in original.
+## CODE:
+from statsmodels.stats.proportion import proportion_confint
+
+age_edges=[17,25,35,45,55,65,120]
+age_labels=['18–25','26–35','36–45','46–55','56–65','66+']
+age_rows=[]
+for name,df in [('Synthetic train',train),('Original',original)]:
+    group=pd.cut(df['customer_age'],bins=age_edges,labels=age_labels)
+    st=df.groupby(group,observed=True)[TARGET].agg(['size','sum']).reindex(age_labels)
+    for label,row in st.iterrows():
+        n,k=int(row['size']),int(row['sum'])
+        low,high=proportion_confint(k,n,method='wilson')
+        age_rows.append({'Источник':name,'Возраст':label,'Операций':n,'Fraud':k,
+                         'Fraud rate, %':100*k/n,'CI low, %':100*low,'CI high, %':100*high})
+age_v9=pd.DataFrame(age_rows)
+fig,ax=plt.subplots(figsize=(11,6.2))
+xx=np.arange(len(age_labels))
+for name,color,dx in [('Synthetic train',C['blue'],-.08),('Original',C['gold'],.08)]:
+    st=age_v9[age_v9['Источник']==name]
+    y=st['Fraud rate, %'].to_numpy()
+    lo=y-st['CI low, %'].to_numpy();hi=st['CI high, %'].to_numpy()-y
+    ax.errorbar(xx+dx,y,yerr=np.array([lo,hi]),color=color,marker='o',markersize=6,
+                lw=2,capsize=4,label=name)
+ax.set_xticks(xx,age_labels)
+ax.set_xlabel('Возраст клиента, лет')
+ax.set_ylabel('Fraud rate, %')
+ax.grid(axis='y',alpha=.15)
+ax.legend(frameon=False)
+finish(fig,'Возраст: один признак, разные кривые риска',
+       'Точки — наблюдаемый риск, вертикальные линии — 95% интервалы Уилсона.',top=.84)
+display(age_v9.round(3).reset_index(drop=True))
+
+## MD: ## 36 · The High Merchant-Risk Paradox
+
+In synthetic train, the `merchant_risk_score` interval **70–80** contains **5,984 transactions** with a fraud rate of approximately **15.53%**. In the **80–90** interval, the rate falls to **4.14%**, even though the risk score is higher.
+
+We first show all fixed intervals and their group sizes. We then check whether the decline can be explained solely by changes in the mix of `merchant_category`. Original contains far fewer transactions in these ranges, so its intervals are wider and estimates less stable.
+## CODE:
+from statsmodels.stats.proportion import proportion_confint
+
+risk_edges=[-np.inf,20,40,60,70,80,90,np.inf]
+risk_labels=['≤20','20–40','40–60','60–70','70–80','80–90','>90']
+merchant_rows=[]
+for name,df in [('Synthetic train',train),('Original',original)]:
+    bins=pd.cut(df['merchant_risk_score'],bins=risk_edges,labels=risk_labels)
+    st=df.groupby(bins,observed=True)[TARGET].agg(['size','sum']).reindex(risk_labels)
+    for label,row in st.iterrows():
+        n,k=int(row['size']),int(row['sum'])
+        lo,hi=proportion_confint(k,n,method='wilson')
+        merchant_rows.append({'Источник':name,'Score':label,'Операций':n,'Fraud':k,
+                              'Fraud rate, %':100*k/n,'CI low, %':100*lo,'CI high, %':100*hi})
+merchant_v9=pd.DataFrame(merchant_rows)
+fig,axes=plt.subplots(1,2,figsize=(17,6))
+xx=np.arange(len(risk_labels))
+for name,color in [('Synthetic train',C['blue']),('Original',C['gold'])]:
+    st=merchant_v9[merchant_v9['Источник']==name]
+    y=st['Fraud rate, %'].to_numpy()
+    axes[0].plot(xx,y,marker='o',lw=2.1,color=color,label=name)
+    axes[1].plot(xx,st['Операций'],marker='o',lw=2.1,color=color,label=name)
+axes[0].axvspan(3.5,4.5,color=C['red'],alpha=.10)
+axes[0].set_ylabel('Fraud rate, %')
+axes[1].set_ylabel('Операций (логарифмическая шкала)')
+axes[1].set_yscale('log')
+for ax in axes:
+    ax.set_xticks(xx,risk_labels,rotation=35)
+    ax.set_xlabel('merchant_risk_score')
+    ax.grid(axis='y',alpha=.15)
+axes[0].legend(frameon=False)
+finish(fig,'Merchant risk: пик 70–80 и последующее снижение',
+       'Слева риск, справа объём группы. Фиксированные границы вместо квантилей.',top=.85)
+display(merchant_v9.round(3).reset_index(drop=True))
+
+# A within-category comparison isolates the most obvious compositional explanation.
+category_rows=[]
+for cat in ['Crypto Exchange','Gift Cards','Gaming','Electronics']:
+    for lo,hi,label in [(60,80,'60–80'),(80,101,'80–100')]:
+        x=train.loc[train['merchant_category'].eq(cat) &
+                    train['merchant_risk_score'].ge(lo) & train['merchant_risk_score'].lt(hi),TARGET]
+        if len(x):
+            category_rows.append({'Категория':cat,'Score':label,'Операций':len(x),
+                                  'Fraud':int(x.sum()),'Fraud rate, %':100*x.mean()})
+merchant_detail_v9=pd.DataFrame(category_rows)
+display(merchant_detail_v9.round(3).reset_index(drop=True))
+
+## MD: <div style="border-left:4px solid #E85A70;background:#F6F9FC;border-radius:0 10px 10px 0;padding:13px 17px;margin:12px 0 22px;">
+  <div style="font-size:11px;color:#E85A70;font-weight:800;letter-spacing:.9px;">NON-MONOTONIC RISK</div>
+  <div style="font-size:13px;line-height:1.6;color:#273D55;margin-top:5px;">In train, fraud rate rises sharply around `merchant_risk_score` 70–80 before falling again. A higher score here <b>does not always mean a higher observed fraud rate</b>.</div>
+</div>
+## MD: ## 37 · Numerical Fingerprints: Do Exact Values Match Original?
+
+We check what share of numerical values in train and test also occur exactly in original.
+## CODE:
+membership_rows = []
+for c in NUM:
+    pool = pd.Index(original[c].dropna().unique())
+    membership_rows.append([c, len(pool), train[c].isin(pool).mean(), test[c].isin(pool).mean()])
+membership = pd.DataFrame(membership_rows, columns=['Feature', 'Unique in original', 'Train matches', 'Test matches'])
+display(membership.sort_values('Train matches', ascending=False).round(5).reset_index(drop=True))
+
+m = membership.sort_values('Train matches')
+fig, ax = plt.subplots(figsize=(12, 7))
+y = np.arange(len(m))
+ax.barh(y-.18, m['Train matches']*100, height=.36, color=C['blue'], label='Train')
+ax.barh(y+.18, m['Test matches']*100, height=.36, color=C['mint'], label='Test')
+ax.set_yticks(y, m['Feature'])
+ax.set_xlim(0, 107)
+ax.set_xlabel('Value appears in original, %')
+ax.legend(frameon=False)
+ax.grid(axis='x', alpha=.13)
+finish(fig, 'Numerical Fingerprints of Original in Synthetic Data', 'Exact single-feature matches are not, by themselves, proof of leakage.')
+## MD: ## 38 · Negative Control: Shifting Account Balance by One Cent
+
+`account_balance_usd` has many distinct values in original. We examine how the exact-match rate changes when we artificially add 1, 2, or 10 cents to the original values.
+## CODE:
+c = 'account_balance_usd'
+controls = []
+for shift in [0, .01, .02, .10, 1.00]:
+    pool = np.round(original[c].to_numpy() + shift, 2)
+    controls.append([f'+{shift:.2f} USD', train[c].isin(pool).mean(), test[c].isin(pool).mean()])
+control_df = pd.DataFrame(controls, columns=['Original shift', 'Train overlap', 'Test overlap'])
+display(control_df.round(5))
+
+fig, ax = plt.subplots(figsize=(10, 5))
+xx = np.arange(len(control_df))
+ax.bar(xx-.18, control_df['Train overlap']*100, color=C['blue'], width=.36, label='Train')
+ax.bar(xx+.18, control_df['Test overlap']*100, color=C['mint'], width=.36, label='Test')
+ax.set_xticks(xx, control_df['Original shift'])
+ax.set_ylabel('Exact matches, %')
+ax.legend(frameon=False)
+ax.grid(axis='y', alpha=.13)
+finish(fig, 'Sensitivity Check for Exact Matches', 'Only original values are shifted; the train/test distributions remain unchanged.')
+## MD: ## 39 · Hidden Fingerprint: What Is Preserved Alongside Account Balance?
+
+A large number of exact `account_balance_usd` matches does not mean that synthetic transactions were copied from original. We test a narrower hypothesis: **when the account balance matches, do other fields also match more often than they do after those fields are randomly shuffled in original?**
+
+For seven additional features, we compare the match rate **among train rows whose balances appear in original** with a reference based on four permutations of the second field. Shuffling preserves value frequencies but breaks their association with account balance.
+## CODE:
+def _shared_codes(left, right, field):
+    # Build identical category codes for exact values from both sources.
+    merged = pd.concat([left[field], right[field]], axis=0, ignore_index=True)
+    values, _ = pd.factorize(merged, sort=False, use_na_sentinel=True)
+    return values[:len(left)].astype(np.int64), values[len(left):].astype(np.int64)
+
+def _pair_key(code_a, code_b):
+    # Collision-free integer pair packing when each factor has fewer than 2^32 levels.
+    a = np.asarray(code_a, dtype=np.int64).astype(np.uint32).astype(np.uint64)
+    b = np.asarray(code_b, dtype=np.int64).astype(np.uint32).astype(np.uint64)
+    return (a << np.uint64(32)) | b
+
+sample_balance = train.sample(n=min(50000,len(train)), random_state=SEED+20).reset_index(drop=True)
+bal_train, bal_orig = _shared_codes(sample_balance, original, 'account_balance_usd')
+balance_match = np.isin(bal_train, np.unique(bal_orig))
+companion_fields = CAT + ['customer_age', 'merchant_risk_score']
+rng_fp = np.random.default_rng(SEED+20)
+fingerprint_rows = []
+for field in companion_fields:
+    x_train, x_orig = _shared_codes(sample_balance, original, field)
+    query = _pair_key(bal_train, x_train)
+    observed = np.isin(query, np.unique(_pair_key(bal_orig, x_orig)))[balance_match].mean()
+    controls = []
+    for rep in range(4):
+        scrambled = rng_fp.permutation(x_orig)
+        controls.append(np.isin(query, np.unique(_pair_key(bal_orig, scrambled)))[balance_match].mean())
+    fingerprint_rows.append({'feature':field, 'observed':observed,
+                             'null_mean':float(np.mean(controls)), 'gain':observed-np.mean(controls)})
+fingerprint = pd.DataFrame(fingerprint_rows).sort_values('gain')
+fig, (ax1, ax2) = plt.subplots(1,2,figsize=(17,6.2), gridspec_kw={'width_ratios':[1.3,.9]})
+yy = np.arange(len(fingerprint))
+ax1.barh(yy-.18, fingerprint['observed']*100, height=.35, color=C['blue'], label='Exact pairs')
+ax1.barh(yy+.18, fingerprint['null_mean']*100, height=.35, color=C['gold'], label='Shuffled original')
+ax1.set_yticks(yy, fingerprint['feature'])
+ax1.set_xlabel('Match rate among balance-matched rows, %')
+ax1.set_xlim(0, max(5, fingerprint[['observed','null_mean']].to_numpy().max()*100)*1.12)
+ax1.legend(frameon=False, loc='lower right', fontsize=8)
+ax1.grid(axis='x', alpha=.15)
+ax1.set_title('Pair Matches with Original',loc='left')
+ax2.barh(yy, fingerprint['gain']*100, color=[C['mint'] if z>=0 else C['red'] for z in fingerprint['gain']])
+ax2.axvline(0, color=C['muted'],lw=1)
+ax2.set_yticks(yy, ['']*len(yy))
+ax2.set_xlabel('Excess over control, percentage points')
+ax2.set_title('Residual Association',loc='left')
+ax2.grid(axis='x', alpha=.15)
+finish(fig, 'Hidden Fingerprint · Does Anything Beyond Account Balance Match?',
+       f'Train sample: {len(sample_balance):,}; balance matched in {balance_match.sum():,} rows; full original dataset.',top=.84)
+display(fingerprint.sort_values('gain', ascending=False).round(5).reset_index(drop=True))
+## MD: ## 40 · Uneven Reuse of Original Account Balances
+
+Exact matches in `account_balance_usd` between original and the synthetic datasets are common, but original values reappear at **very different frequencies**. In original, **19,260 distinct balances occur once**, **367 occur twice**, and **two occur three times**. Balances occurring twice in original appear in synthetic train **202 times on average**, versus about **27 times** for values that occur once. One balance that occurs twice in original appears **974 times** in train.
+
+This unevenness is also visible in test. When original balances are ranked by how often they reappear in train, the **most frequently reused 10%** account for **53.6% of all exact train matches** and **53.3% of test matches**. Correlations between train and test reuse frequencies are **0.985 (Pearson)** and **0.963 (Spearman)**.
+
+This indicates stable, highly uneven **reuse of individual values**, but it does not establish copying of entire original rows or transfer of original `is_fraud` labels. Rounding of balances, duplicates within original, and the shape of the original distribution can also affect exact-match counts.
+## CODE:
+# Count how many times each original balance value reappears in synthetic train and test.
+source_balance_counts = original['account_balance_usd'].value_counts().rename('Original count')
+reuse_balance = pd.DataFrame(index=source_balance_counts.index)
+reuse_balance['Original count'] = source_balance_counts
+reuse_balance['Train repeats'] = train['account_balance_usd'].value_counts().reindex(reuse_balance.index).fillna(0).astype(int)
+reuse_balance['Test repeats'] = test['account_balance_usd'].value_counts().reindex(reuse_balance.index).fillna(0).astype(int)
+reuse_balance.index.name = 'account_balance_usd'
+
+reuse_by_source_count = (reuse_balance.groupby('Original count')
+                         .agg(original_values=('Train repeats', 'size'),
+                              train_matches=('Train repeats', 'sum'),
+                              test_matches=('Test repeats', 'sum'),
+                              mean_train_repeats=('Train repeats', 'mean'),
+                              median_train_repeats=('Train repeats', 'median')))
+display(reuse_by_source_count.round(2))
+
+ranked_balances = reuse_balance.sort_values('Train repeats', ascending=False)
+top_fracs = [0.01, 0.05, 0.10, 0.25]
+concentration_rows = []
+for frac in top_fracs:
+    selected = ranked_balances.iloc[:max(1, round(len(ranked_balances) * frac))]
+    concentration_rows.append({
+        'Top original values, %': 100 * frac,
+        'Distinct balances': len(selected),
+        'Matched train rows, %': 100 * selected['Train repeats'].sum() / reuse_balance['Train repeats'].sum(),
+        'Matched test rows, %': 100 * selected['Test repeats'].sum() / reuse_balance['Test repeats'].sum()
+    })
+concentration_balance = pd.DataFrame(concentration_rows)
+print(f'Exact original balance matches: {reuse_balance["Train repeats"].sum():,} in train; '
+      f'{reuse_balance["Test repeats"].sum():,} in test.')
+print(f'Train/Test repeat correlations: '
+      f'Pearson {reuse_balance["Train repeats"].corr(reuse_balance["Test repeats"]):.3f}; '
+      f'Spearman {reuse_balance["Train repeats"].corr(reuse_balance["Test repeats"], method="spearman"):.3f}.')
+display(concentration_balance.round(2))
+display(ranked_balances.head(10).reset_index().rename(columns={'account_balance_usd': 'Balance, USD'}))
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(18, 6.8), gridspec_kw={'width_ratios': [0.9, 1.1]})
+y = np.arange(len(concentration_balance))
+ax1.barh(y - .18, concentration_balance['Matched train rows, %'],
+         height=.35, color=C['blue'], label='Train')
+ax1.barh(y + .18, concentration_balance['Matched test rows, %'],
+         height=.35, color=C['mint'], label='Test')
+ax1.set_yticks(y, [f'Top {v:g}%' for v in concentration_balance['Top original values, %']])
+ax1.invert_yaxis()
+ax1.set_xlim(0, 100)
+ax1.set_xlabel('Share of all exact original-value matches, %')
+ax1.set_title('Reuse Concentration', loc='left')
+ax1.legend(frameon=False)
+ax1.grid(axis='x', alpha=.14)
+
+ax2.scatter(reuse_balance['Train repeats'] + 1, reuse_balance['Test repeats'] + 1,
+            s=10, alpha=.23, color=C['blue'], edgecolors='none', rasterized=True)
+ax2.set_xscale('log')
+ax2.set_yscale('log')
+ax2.set_xlabel('Train occurrences + 1, log scale')
+ax2.set_ylabel('Test occurrences + 1, log scale')
+ax2.set_title('Reuse Counts Are Stable Across Splits', loc='left')
+ax2.grid(alpha=.13)
+finish(fig, 'Original-Value Reuse · Concentration and Stability',
+       'Top-value sets are defined by train counts and evaluated unchanged on test; all original distinct balances are included.',
+       top=.90)
+
+## MD: <div style="border-left:4px solid #13A99B;background:#F6F9FC;border-radius:0 10px 10px 0;padding:13px 17px;margin:12px 0 22px;">
+  <div style="font-size:11px;color:#13A99B;font-weight:800;letter-spacing:.9px;">THE REUSE FINGERPRINT</div>
+  <div style="font-size:13px;line-height:1.6;color:#273D55;margin-top:5px;">Exact balance matches between original and synthetic are highly uneven. Some original values recur hundreds of times, while others are barely seen.</div>
+</div>
+## MD: ## 41 · Echo of Original Labels in Matching Balances
+
+A matching `account_balance_usd` value alone says nothing about `is_fraud`. We ask a more specific question: is the synthetic fraud rate associated with the label of an original row that has **the same balance**?
+
+To avoid ambiguous matches, we keep only balances that appear **exactly once** in original. Within the matching train subset, the fraud rate is approximately **1.665%** when the original label is 0 and **2.089%** when it is 1. The next cell checks whether this difference persists under negative controls. This is an association between labels, not evidence of leakage.
+## CODE:
+# Keep only balances that identify exactly one row of the original dataset.
+orig_unique = original.loc[~original['account_balance_usd'].duplicated(keep=False),
+                           ['account_balance_usd',TARGET]].rename(columns={TARGET:'original_label'})
+matched_v9 = train[['account_balance_usd',TARGET,'auth_method','merchant_category',
+                    'cvv_retry_count','customer_age']].merge(orig_unique,on='account_balance_usd',how='inner')
+matched_v9['original_label']=matched_v9['original_label'].astype(int)
+label_echo_v9=matched_v9.groupby('original_label')[TARGET].agg(['size','sum','mean']).rename(
+    columns={'size':'Строк train','sum':'Fraud train','mean':'Fraud rate'})
+label_echo_v9['Fraud rate, %']=100*label_echo_v9['Fraud rate']
+print(f'Уникальных балансов в original: {len(orig_unique):,}; совпавших строк train: {len(matched_v9):,}')
+display(label_echo_v9[['Строк train','Fraud train','Fraud rate, %']].round(4))
+fig,axes=plt.subplots(1,2,figsize=(14,5.8))
+rates=label_echo_v9['Fraud rate, %'].reindex([0,1])
+counts=label_echo_v9['Строк train'].reindex([0,1])
+axes[0].bar(['Original label 0','Original label 1'],rates,color=[C['blue'],C['red']],width=.52)
+axes[1].bar(['Original label 0','Original label 1'],counts,color=[C['blue'],C['red']],width=.52)
+axes[0].set_ylabel('Fraud rate synthetic train, %')
+axes[1].set_ylabel('Число совпавших строк train')
+axes[1].set_yscale('log')
+for ax in axes:
+    ax.grid(axis='y',alpha=.15)
+axes[0].set_title('Риск в train',loc='left')
+axes[1].set_title('Поддержка сравнения',loc='left')
+finish(fig,'Одинаковый баланс: слабое, но измеримое эхо метки original',
+       'Повторные synthetic строки с одним балансом зависимы; ниже проверяем устойчивость.',top=.82)
+
+## MD: ## 42 · Controls for the Original Label Echo
+
+We assess how robust the preceding difference is. As a contrast, we compare exact balance matches with artificial shifts of **1, 2, and 10 cents, and 1 dollar** in original values. We then examine the two halves of synthetic train separately, split by ID.
+
+Differences may also occur under control shifts: balance values are discrete, and the groups linked to an original label of 1 become small. It is therefore important to show **not just the difference in fraud rates, but also the number of matched rows and fraud cases**.
+## CODE:
+# Negative controls: re-link source labels using intentionally shifted original balances.
+ctrl_rows=[]
+orig_unique_raw=original.loc[~original['account_balance_usd'].duplicated(keep=False),
+                            ['account_balance_usd',TARGET]].copy()
+for shift in [0,.01,.02,.10,1.00]:
+    donor=orig_unique_raw.copy()
+    donor['account_balance_usd']=(donor['account_balance_usd']+shift).round(2)
+    donor=donor.loc[~donor['account_balance_usd'].duplicated(keep=False)].rename(
+        columns={TARGET:'donor_label'})
+    joined=train[['account_balance_usd',TARGET]].merge(donor,on='account_balance_usd',how='inner')
+    st=joined.groupby('donor_label')[TARGET].agg(['size','sum','mean'])
+    n0=int(st.loc[0,'size']) if 0 in st.index else 0
+    n1=int(st.loc[1,'size']) if 1 in st.index else 0
+    f0=int(st.loc[0,'sum']) if 0 in st.index else 0
+    f1=int(st.loc[1,'sum']) if 1 in st.index else 0
+    dpp=100*(st.loc[1,'mean']-st.loc[0,'mean']) if (n0 and n1) else np.nan
+    ctrl_rows.append({'Сдвиг original, $':shift,'Совпадений с label=0':n0,
+                      'Совпадений с label=1':n1,'Fraud при label=0':f0,
+                      'Fraud при label=1':f1,'Разница риска, п.п.':dpp})
+controls_echo_v9=pd.DataFrame(ctrl_rows)
+
+half_rows=[]
+mid_id=train['id'].median()
+for label,mask in [('Первая половина',train['id']<=mid_id),('Вторая половина',train['id']>mid_id)]:
+    matched_half=train.loc[mask,['account_balance_usd',TARGET]].merge(
+        orig_unique.rename(columns={'original_label':'donor_label'}),
+        on='account_balance_usd',how='inner')
+    st=matched_half.groupby('donor_label')[TARGET].agg(['size','sum','mean'])
+    half_rows.append({'Часть train':label,'Совпадений label=1':int(st.loc[1,'size']),
+                      'Fraud label=1':int(st.loc[1,'sum']),
+                      'Разница риска, п.п.':100*(st.loc[1,'mean']-st.loc[0,'mean'])})
+halves_echo_v9=pd.DataFrame(half_rows)
+fig,ax=plt.subplots(figsize=(12,5.5))
+labels=[f'+{v:g} $' for v in controls_echo_v9['Сдвиг original, $']]
+values=controls_echo_v9['Разница риска, п.п.']
+ax.bar(labels,values,color=[C['blue']]+[C['gold']]*4,width=.58)
+ax.axhline(0,color=C['muted'],linewidth=1)
+ax.set_ylabel('Разница fraud rate между donor-label 1 и 0, п.п.')
+ax.set_xlabel('Искусственный сдвиг значений original')
+ax.grid(axis='y',alpha=.15)
+finish(fig,'Эхо исходной метки: точное совпадение и отрицательные контроли',
+       'Нулевой сдвиг выделен отдельно; при других сдвигах размер совпавших групп уменьшается.',top=.83)
+display(controls_echo_v9.round(4).reset_index(drop=True))
+display(halves_echo_v9.round(4).reset_index(drop=True))
+
+## MD: ## 43 · Exact Row Overlap Between Sources
+
+We check whether any transactions match on **all 24 input features**, excluding ID and target. This tests the simplest scenario: direct copying of an entire row.
+## CODE:
+def overlap_rows(left, right, cols):
+    a = pd.MultiIndex.from_frame(left[cols])
+    b = pd.MultiIndex.from_frame(right[cols])
+    return int(a.isin(b).sum())
+
+full_matches = pd.DataFrame({
+    'Comparison': ['Train → Original', 'Test → Original', 'Train → Test'],
+    'Full-row matches': [overlap_rows(train, original, FEATURES),
+                          overlap_rows(test, original, FEATURES),
+                          overlap_rows(train, test, FEATURES)]
+})
+display(full_matches.style.hide(axis='index'))
+## MD: ## 44 · Partial Overlap: Which Dependencies Survived Generation?
+
+We check whether **pairs of values** from original are preserved in synthetic. As a control, we randomly shuffle the second column in original: its marginal distribution stays the same, but its relationship with the first column is broken.
+## CODE:
+PAIRS = [
+    ('amount_usd', 'merchant_category'),
+    ('amount_usd', 'auth_method'),
+    ('amount_usd', 'hours_since_last_txn'),
+    ('merchant_risk_score', 'merchant_category'),
+    ('account_balance_usd', 'merchant_category'),
+    ('velocity_score', 'auth_method')
+]
+
+rng = np.random.default_rng(SEED)
+pair_rows = []
+for a, b in PAIRS:
+    observed = overlap_rows(train, original, [a, b]) / len(train)
+    null = []
+    for k in range(5):
+        neg = original[[a, b]].copy()
+        neg[b] = rng.permutation(neg[b].to_numpy())
+        null.append(overlap_rows(train, neg, [a, b]) / len(train))
+    pair_rows.append([a, b, observed, np.mean(null), np.std(null), observed - np.mean(null)])
+pair_result = pd.DataFrame(pair_rows, columns=['Feature A', 'Feature B', 'Overlap', 'Control', 'Control SD', 'Difference'])
+display(pair_result.sort_values('Difference', ascending=False).round(5).reset_index(drop=True))
+
+fig, ax = plt.subplots(figsize=(12, 6))
+ss = pair_result.sort_values('Difference', ascending=True)
+labels = ss['Feature A'] + '\n× ' + ss['Feature B']
+y = np.arange(len(ss))
+ax.barh(y-.19, ss['Overlap']*100, height=.36, color=C['blue'], label='Observed')
+ax.barh(y+.19, ss['Control']*100, height=.36, color=C['gold'], label='Permuted original')
+ax.set_yticks(y, labels, fontsize=9)
+ax.set_xlabel('Train rows with a pair found in original, %')
+ax.legend(frameon=False)
+ax.grid(axis='x', alpha=.13)
+finish(fig, 'Were Joint Values Preserved?', 'The null model breaks associations within original; five permutations provide a reference, not an exact p-value.', top=.90)
+## MD: ## 45 · Synthetic Dependency Map: All 276 Feature Pairs
+
+With 24 features, there are **276 unique pairs**. For each pair, we measure what share of value combinations in a fixed train subsample are also found in original. We then shuffle one original feature three times and compare the observed match rate with this **control reference**.
+
+The key measure is **the percentage-point difference between the observed match rate and the mean rate after shuffling**. This is a map of preserved value combinations, not a Pearson correlation matrix or proof of row copying. We use up to 40,000 train rows, all of original, and a fixed random seed. Three permutations are useful for exploration but **insufficient for estimating a p-value**.
+## CODE:
+from itertools import combinations
+
+dep_sample = train.sample(n=min(40000,len(train)), random_state=SEED+22).reset_index(drop=True)
+dep_codes = {field:_shared_codes(dep_sample, original, field) for field in FEATURES}
+rng_dep = np.random.default_rng(SEED+22)
+dep_records = []
+for a,b in combinations(FEATURES,2):
+    tr_a, or_a = dep_codes[a]
+    tr_b, or_b = dep_codes[b]
+    tr_key = _pair_key(tr_a,tr_b)
+    obs = np.isin(tr_key, np.unique(_pair_key(or_a,or_b))).mean()
+    controls = []
+    for rep in range(3):
+        shuf_b = rng_dep.permutation(or_b)
+        controls.append(np.isin(tr_key, np.unique(_pair_key(or_a,shuf_b))).mean())
+    dep_records.append({'a':a,'b':b,'observed':obs,'null':np.mean(controls),
+                        'excess_pp':100*(obs-np.mean(controls))})
+dep = pd.DataFrame(dep_records)
+assert len(dep) == 276, 'Expected 276 unique pairs'
+matrix = pd.DataFrame(np.nan, index=FEATURES, columns=FEATURES)
+for r in dep.itertuples(index=False):
+    matrix.loc[r.a,r.b] = r.excess_pp
+    matrix.loc[r.b,r.a] = r.excess_pp
+fig, ax = plt.subplots(figsize=(15.5,13.8))
+lim = max(.1, float(np.nanquantile(np.abs(matrix.to_numpy(dtype=float)),.98)))
+sns.heatmap(matrix.astype(float), ax=ax, cmap='RdBu_r', center=0, vmin=-lim, vmax=lim,
+            mask=np.eye(len(FEATURES), dtype=bool), linewidths=.25,
+            linecolor=C['white'], square=True, cbar_kws={'label':'Observed – control, percentage points', 'shrink':.72})
+ax.tick_params(axis='x', labelrotation=75, labelsize=8)
+ax.tick_params(axis='y', labelrotation=0, labelsize=8)
+finish(fig, 'Synthetic Dependency Map · 276 Feature-Pair Checks',
+       'Color indicates an excess or deficit of exact pairs relative to shuffled original; values are clipped at the 98th percentile.',top=.92)
+
+top = dep.sort_values('excess_pp', ascending=False).head(14).sort_values('excess_pp')
+fig, ax = plt.subplots(figsize=(13,7))
+labels = (top['a']+' × '+top['b']).tolist()
+yy=np.arange(len(top))
+ax.barh(yy, top['excess_pp'], color=[C['mint'] if d>=0 else C['red'] for d in top['excess_pp']], height=.65)
+ax.set_yticks(yy, labels, fontsize=9)
+for i, val in enumerate(top['excess_pp']):
+    ax.text(val + max(.04, top['excess_pp'].max()*.025), i, f'+{val:.2f} pp', va='center', fontsize=9)
+ax.axvline(0, color=C['muted'], lw=1)
+ax.set_xlim(min(0,top['excess_pp'].min()), max(.5,top['excess_pp'].max()*1.34))
+ax.set_xlabel('Pair overlap in excess of null, percentage points')
+ax.grid(axis='x', alpha=.15)
+finish(fig, 'Top 14 Pairs Most Strongly Preserved vs Random Control',
+       f'Exploratory ranking based on {len(dep_sample):,} train rows. Multiple testing may affect this ranking.',top=.88)
+display(dep.sort_values('excess_pp',ascending=False).head(20).round(5).reset_index(drop=True))
+## MD: ## 46 · Semantic Consistency of Features
+
+Two fields can look plausible separately but form unusual combinations—for example, an ATM channel paired with an iPhone device.
+## CODE:
+for name, df in [('Train', train), ('Original', original)]:
+    table = pd.crosstab(df['channel'], df['device_type'], normalize='index')*100
+    print(name)
+    display(table.round(2))
+
+fig, axes = plt.subplots(1, 2, figsize=(16, 6))
+for ax, (name, df) in zip(axes, [('Train', train), ('Original', original)]):
+    table = pd.crosstab(df['channel'], df['device_type'], normalize='index')*100
+    sns.heatmap(table, ax=ax, cmap='Blues', annot=True, fmt='.0f', linewidths=.5, linecolor='white', cbar=False)
+    ax.set_title(f'{name} · device type within channel', loc='left')
+    ax.set_xlabel('Device type')
+    ax.set_ylabel('Channel')
+finish(fig, 'Are Unusual Combinations Already Present in Original?', 'Values are within-channel percentages. Compare both sources before labeling a combination an artifact.', top=.87)
+## MD: ## 47 · Does Anything Change Along the ID Sequence?
+
+IDs in synthetic train/test may be nothing more than sequential row numbers. We check whether fraud rates and average numerical-feature values change across blocks of train.
+## CODE:
+id_bins = pd.qcut(train[ID], 10, labels=False, duplicates='drop')
+id_report = train.groupby(id_bins)[[TARGET, 'amount_usd', 'merchant_risk_score', 'velocity_score']].mean()
+id_report.index.name = 'ID decile'
+display(id_report.round(5))
+
+fig, axes = plt.subplots(1, 2, figsize=(13, 4))
+axes[0].plot(id_report.index+1, id_report[TARGET]*100, marker='o', color=C['red'], linewidth=2)
+axes[0].axhline(train[TARGET].mean()*100, color=C['muted'], linestyle='--')
+axes[0].set_title('Fraud Rate Across ID Blocks')
+axes[0].set_xlabel('ID decile')
+axes[0].set_ylabel('Fraud, %')
+axes[1].plot(id_report.index+1, id_report['merchant_risk_score'], marker='o', color=C['blue'], linewidth=2, label='Merchant risk')
+axes[1].plot(id_report.index+1, id_report['velocity_score'], marker='o', color=C['mint'], linewidth=2, label='Velocity')
+axes[1].set_title('Mean Values Across ID Blocks')
+axes[1].set_xlabel('ID decile')
+axes[1].legend(frameon=False)
+for ax in axes:
+    ax.grid(axis='y', alpha=.14)
+finish(fig, 'Data Stability Across ID', 'ID deciles are an exploratory grouping, not necessarily a time sequence.', top=.84)
+## MD: <a id="part-iv"></a>
+<div style="border:1px solid #DCE6EE;border-left:6px solid #2775D1;background:#F7F9FC;border-radius:0 12px 12px 0;padding:18px 22px;margin:30px 0 20px;">
+  <div style="font-size:11px;letter-spacing:1.3px;font-weight:800;color:#2775D1;">PART IV · FINAL DATA MAP</div>
+  <div style="font-size:24px;font-weight:800;color:#14263B;margin-top:6px;">Map of Key Findings</div>
+  <div style="font-size:14px;line-height:1.5;color:#61758D;margin-top:6px;">We bring together the findings across all 24 features, then identify the limits of their interpretation.</div>
+</div>
+## MD: ## 48 · Summary Table of All 24 Features
+
+For numerical features, we show univariate AUC in its more informative direction; for categorical features, the fraud-rate range; and for Boolean features, the risk at `True` and `False`.
+## CODE:
+summary_rows = []
+for c in FEATURES:
+    kind = 'Numerical' if c in NUM else 'Category' if c in CAT else 'Boolean'
+    if c in NUM:
+        auc = one_auc.set_index('Feature').loc[c, 'Best-direction AUC']
+        signal = f'Univariate AUC {auc:.3f}'
+        detail = f'Median {train[c].median():.2f}; p99 {train[c].quantile(.99):.2f}'
+    elif c in CAT:
+        s = cat_stats[c]['fraud_rate']*100
+        signal = f'Fraud rate {s.min():.2f}–{s.max():.2f}%'
+        detail = f'{train[c].nunique()} categories'
+    else:
+        r0 = train.loc[~train[c], TARGET].mean()*100
+        r1 = train.loc[train[c], TARGET].mean()*100
+        signal = f'False {r0:.2f}% → True {r1:.2f}%'
+        detail = f'True for {train[c].mean()*100:.2f}% of transactions'
+    summary_rows.append([c, kind, DESCR[c], signal, detail])
+summary = pd.DataFrame(summary_rows, columns=['Feature', 'Type', 'Meaning', 'Signal / Difference', 'Scale / Frequency'])
+display(summary.style.hide(axis='index'))
+## MD: <a id="conclusions"></a>
+
+## Key Findings
+
+**Fraud is unevenly distributed.** The overall fraud rate in synthetic train is about **1.67%**, but individual purchase categories, authentication methods, and signal combinations differ in risk by orders of magnitude. A high fraud rate does not necessarily imply broad coverage of fraudulent cases or a large transaction value.
+
+**No single warning flag explains all fraud.** Transactions with none of the six Boolean indicators account for approximately **33.1%** of fraud cases in train. Even within this group, authentication methods and repeated CVV attempts distinguish sharply different risk profiles.
+
+**Context changes how warning signals should be read.** `billing_shipping_mismatch` occurs far more often in Online, but fraud risk among flagged transactions also depends on the channel. Flag prevalence and the probability of fraud *given that the flag is active* are not the same thing.
+
+**Train and test are similar; original is not always similar to them.** The synthetic splits resemble each other in individual feature distributions and in the joint distributions examined. Comparisons with original, however, reveal changes in time-of-day risk, age-related risk, the `hours_since_last_txn`–`velocity_score` relationship, and other dependencies.
+
+**The original data left measurable traces.** Exact `account_balance_usd` matches are frequent and extremely uneven. Additional checks reveal a weak link with original labels, but matching indi
+## MD: <a id="experiments"></a>
+
+## 49 · XGBoost Experiments: From Raw Features to the Best OOF
+
+The experiments asked a simple question: **how much can we gain by changing the way numerical values are represented?** Four feature configurations were compared using the same five-fold OOF ROC AUC protocol.
+
+Target Encoding of the integer and decimal parts improved the result over raw features. Adding exact-value Target Encoding gave the strongest OOF score. A much larger combination with Digits, Frequency, Interactions, Profiles, and Triple TE did not improve on it, despite taking considerably longer to train.
+
+The selected configuration reached **0.950183 OOF ROC AUC**. Its submission, `SUB_final_selected.csv`, achieved **0.95084 on the Kaggle Public Leaderboard**. The graphics below show the score progression and the trade-off between additional features, training time, and validation performance.
+
+## CODE:
+# Results from full five-fold OOF experiments with a single XGBoost.
+# Each row uses the same CV protocol. No model training is performed in this cell.
+from IPython.display import HTML
+
+cv_results = pd.DataFrame([
+    ['Raw features (RAW)', 0.947273, 453.0],
+    ['Integer + decimal TE', 0.949466, 525.2],
+    ['Extended feature groups', 0.950059, 2809.2],
+    ['Integer + decimal + exact TE', 0.950183, 594.7],
+], columns=['Feature representation', 'OOF ROC AUC', 'Time (sec)'])
+
+raw_auc = cv_results.loc[0, 'OOF ROC AUC']
+cv_results['Gain vs RAW'] = cv_results['OOF ROC AUC'] - raw_auc
+cv_results['Time (min)'] = cv_results['Time (sec)'] / 60
+cv_results['Experiment'] = ['RAW', 'Parts TE', 'Extended features', 'Parts + exact TE']
+
+# A matched two-panel figure: OOF gains and the time/performance trade-off.
+colors = [C['muted'], C['blue'], C['gold'], C['mint']]
+fig, (ax1, ax2) = plt.subplots(
+    1, 2, figsize=(18, 6.2), gridspec_kw={'width_ratios': [1.35, .8]}
+)
+fig.subplots_adjust(wspace=.30)
+
+positions = np.arange(len(cv_results))
+ax1.barh(positions, cv_results['Gain vs RAW'], color=colors,
+         height=.58, edgecolor='white', linewidth=1.1)
+ax1.set_yticks(positions)
+ax1.set_yticklabels(cv_results['Feature representation'], fontsize=10)
+ax1.invert_yaxis()
+ax1.set_xlim(-.00010, .00364)
+ax1.axvline(0, color=C['muted'], linewidth=1, alpha=.65)
+ax1.set_xlabel('OOF ROC AUC gain relative to RAW')
+ax1.set_title('What Improved the Five-Fold OOF?', loc='left', pad=15)
+ax1.grid(axis='x', alpha=.13)
+ax1.set_axisbelow(True)
+for i, gain in enumerate(cv_results['Gain vs RAW']):
+    label = 'BASELINE' if i == 0 else f'+{gain:.6f}'
+    ax1.text(max(0, gain) + .000085, i, label, va='center',
+             fontsize=9, fontweight='bold', color=C['ink'])
+
+# The winning compact TE set performed better than the much slower extended set.
+for i, row in cv_results.iterrows():
+    ax2.scatter(row['Time (min)'], row['OOF ROC AUC'], s=190 if i == 3 else 125,
+                color=colors[i], edgecolor='white', linewidth=2, zorder=4)
+    if i == 0:
+        offset = (7, -17)
+    elif i == 1:
+        offset = (8, -18)
+    elif i == 2:
+        offset = (-112, 12)
+    else:
+        offset = (11, 10)
+    ax2.annotate(row['Experiment'],
+                 (row['Time (min)'], row['OOF ROC AUC']),
+                 xytext=offset, textcoords='offset points',
+                 fontsize=9, fontweight='bold' if i == 3 else 'normal',
+                 color=C['ink'])
+ax2.set_xlim(0, 54)
+ax2.set_ylim(.9468, .95075)
+ax2.set_xlabel('Total five-fold run time, minutes')
+ax2.set_ylabel('OOF ROC AUC')
+ax2.set_title('More Features Did Not Mean Better OOF', loc='left', pad=15)
+ax2.grid(alpha=.13)
+ax2.set_axisbelow(True)
+
+finish(fig, 'From Raw Values to a Stronger XGBoost',
+       'Four verified five-fold OOF runs; the final submission scored 0.95084 on Public LB.',
+       top=.85)
+
+# Compact scorecard matching the notebook's blue / teal visual language.
+display(HTML('''''''''<div style="display:flex;flex-wrap:wrap;gap:12px;margin:10px 0 14px;font-family:Arial,sans-serif;">
+<div style="flex:1 1 220px;min-width:190px;padding:16px 19px;border-radius:12px;background:#14263B;color:#FFFFFF;border:1px solid #23475F;">
+<div style="font-size:11px;letter-spacing:1px;color:#9FC3D4;font-weight:700;">BEST 5-FOLD OOF ROC AUC</div>
+<div style="font-size:29px;font-weight:800;margin-top:6px;color:#FFFFFF;">0.950183</div>
+</div>
+<div style="flex:1 1 220px;min-width:190px;padding:16px 19px;border-radius:12px;background:#F1F8F7;border:1px solid #B9DBD6;">
+<div style="font-size:11px;letter-spacing:1px;color:#287B73;font-weight:700;">KAGGLE PUBLIC LEADERBOARD</div>
+<div style="font-size:29px;font-weight:800;margin-top:6px;color:#146E67;">0.95084</div>
+</div>
+</div>'''''''''))
+
+report_table = cv_results[['Feature representation', 'OOF ROC AUC',
+                            'Gain vs RAW', 'Time (min)']].copy()
+
+def emphasize_winner(row):
+    return [
+        'background-color:#E4F5EF;color:#16483E;font-weight:bold;border-top:2px solid #13A99B;'
+        if row.name == 3 else ''
+        for _ in row
+    ]
+
+styled = (report_table.style
+          .hide(axis='index')
+          .format({'OOF ROC AUC': '{:.6f}',
+                   'Gain vs RAW': lambda x: '—' if abs(x) < 1e-12 else f'+{x:.6f}',
+                   'Time (min)': '{:.1f}'})
+          .apply(emphasize_winner, axis=1)
+          .set_table_styles([
+              {'selector':'th', 'props': [('background-color','#14263B'),
+                                         ('color','#FFFFFF'),('padding','12px 13px'),
+                                         ('text-align','left'),('font-size','12px')]},
+              {'selector':'td', 'props': [('padding','11px 13px'),
+                                         ('border-bottom','1px solid #DFE8EE'),
+                                         ('font-size','12px')]},
+              {'selector':'table','props':[('border-collapse','collapse'),
+                                           ('width','100%')]},
+          ])
+)
+display(styled)
+
+## MD: <div style="border-left:5px solid #13A99B;background:#F1F8F7;border-radius:0 11px 11px 0;padding:17px 20px;margin:22px 0 10px;">
+  <div style="font-size:11px;font-weight:800;letter-spacing:1px;color:#147C74;">TAKEAWAY</div>
+  <div style="font-size:15px;line-height:1.7;color:#193D3C;margin-top:5px;">Behind nearly identical overall fraud rates, original and synthetic contain different risk profiles. Looking at features one at a time reveals only part of the picture. Conditional distributions and joint dependencies expose traces of generation that ordinary column-level statistics cannot reveal.</div>
+</div>

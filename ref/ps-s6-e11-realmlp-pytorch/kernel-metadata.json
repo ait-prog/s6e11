@@ -1,0 +1,23 @@
+{
+  "id": "yekenot/ps-s6-e11-realmlp-pytorch",
+  "id_no": 142131899,
+  "title": "PS|S6|E11: RealMLP \u00b7 PyTorch",
+  "code_file": "ps-s6-e11-realmlp-pytorch.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [
+    "gpu"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [],
+  "competition_sources": [
+    "playground-series-s6e11"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-private-byod/python@sha256:58f63ed194fa7d5c55181f1e8ec0be141e9211efa23bc7501c1c865f7e00057d",
+  "machine_shape": "NvidiaTeslaT4"
+}

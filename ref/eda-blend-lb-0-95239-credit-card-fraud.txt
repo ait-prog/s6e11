@@ -1,0 +1,670 @@
+## MD: # 💳 Credit Card Fraud: Shallow Trees, Target Encoding & GPU XGBoost
+**Playground Series S6E11** · metric: ROC AUC · 699,960 train rows · 299,984 test rows · fraud rate 1.67%
+
+### Results so far (10-fold CV, GPU)
+| Model | OOF AUC | Notes |
+|---|---|---|
+| LightGBM (tuned) | 0.94661 | 4 leaves per tree won the search |
+| CatBoost (tuned) | 0.94709 | depth 5, slowest model |
+| XGBoost (tuned, 3 seeds) | 0.94751 | depth 3, cheapest to run on GPU |
+| **Rank blend (0 / 0.35 / 0.65)** | **0.94770** | equal-weight blend: 0.94758 |
+
+**What I found**
+1. **Shallow trees win.** The best XGBoost depth is 3, LightGBM 4 leaves, CatBoost depth 5. The signal looks mostly additive, so extra interaction depth does not help.
+2. **XGBoost beats LightGBM in 10 of 10 folds** (paired, same folds), by about 0.0005 AUC. It beats CatBoost in 7 of 10.
+3. **Seeds help:** 3 XGBoost seeds gave about +0.0003 over a single seed.
+4. **My model and the public blend differ more than public files differ from each other** (rank correlation 0.96 vs 0.9995+).
+5. Reviewing the top 10% highest-scored transactions catches about 83% of all fraud.
+
+*These numbers are from my previous full run. Update this table after you rerun.*
+## CODE:
+import os, gc, time, warnings
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import rankdata, ks_2samp
+from sklearn.model_selection import StratifiedKFold, train_test_split
+from sklearn.metrics import roc_auc_score, roc_curve, auc
+from sklearn.feature_selection import mutual_info_classif
+import lightgbm as lgb
+import xgboost as xgb
+from catboost import CatBoostClassifier
+try:
+    import optuna
+except ImportError:
+    import subprocess, sys
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", "optuna"], check=False)
+    import optuna
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+warnings.filterwarnings("ignore")
+sns.set_theme(style="whitegrid", context="notebook")
+plt.rcParams.update({"figure.dpi": 110, "axes.titlesize": 12, "axes.titleweight": "bold"})
+## MD: #  CONFIG 
+## CODE:
+DEBUG    = False 
+USE_GPU  = True     # True when the notebook accelerator is a GPU
+TARGET   = "is_fraud"
+PATH     = os.environ.get("COMP_PATH", "/kaggle/input/competitions/playground-series-s6e11/")
+OUT_DIR  = os.environ.get("OUT_DIR", "/kaggle/working/")
+SEED     = 42
+
+MODELS   = ["xgb", "cat"]    # add "lgb" for a third model (it got weight 0 in my blend and costs ~25 min)
+USE_TE   = True              # out-of-fold target encoding for XGBoost (CatBoost does this natively)
+TUNE_ROWS   = 20000 if DEBUG else 350_000
+TUNE_LR     = 0.1   if DEBUG else 0.03
+TRIALS      = {"lgb": 2, "cat": 2, "xgb": 3} if DEBUG else {"lgb": 20, "cat": 25, "xgb": 200}
+TIME_BUDGET = 120 if DEBUG else 18 * 60        # seconds per model
+FINAL_LR    = {"lgb": 0.1, "cat": 0.1, "xgb": 0.1} if DEBUG else {"lgb": 0.03, "cat": 0.04, "xgb": 0.015}
+FINAL_N_EST = 200 if DEBUG else 8000
+FINAL_FOLDS = 3   if DEBUG else 10
+FINAL_SEEDS = {"lgb": [42], "cat": [42], "xgb": [42] if DEBUG else [42, 7, 2024, 11, 99]}
+
+# first Optuna trial = best settings from my previous runs, so tuning can't do worse than before
+PREV_BEST = {
+    "lgb": {'num_leaves': 4, 'min_child_samples': 316, 'subsample': 0.9775, 'colsample_bytree': 0.9165,
+            'reg_alpha': 0.0017, 'reg_lambda': 0.0016, 'cat_smooth': 53.958, 'min_split_gain': 0.3203},
+    "cat": {'depth': 5, 'l2_leaf_reg': 14.4023, 'random_strength': 3.0053, 'bagging_temperature': 0.0683,
+            'border_count': 196, 'max_ctr_complexity': 2},
+    "xgb": {'max_depth': 3, 'min_child_weight': 9.1646, 'subsample': 0.9494, 'colsample_bytree': 0.5816,
+            'gamma': 0.6502, 'reg_alpha': 6.5563, 'reg_lambda': 0.0089, 'max_bin': 256, 'scale_pos_weight': 1},
+}
+
+PUBLIC_FILES = { "/kaggle/input/notebooks/saamhm/eda-blend-lb-0-95239-credit-card-fraud/submission_final.csv":1,"/kaggle/input/notebooks/malyshevdanil/fraud-signal-lab-gpt-2-and-glm-fusion/submission.csv":1}
+PUB_WEIGHT    = 0.5
+ORIGINAL_PATH = os.environ.get("ORIG_PATH", None)   # original dataset csv (same columns incl. is_fraud). Used for TRAINING only, never for validation
+
+
+os.makedirs(OUT_DIR, exist_ok=True)
+def rk(a):
+    a = np.asarray(a, dtype=float)
+    return rankdata(a) / len(a)
+## MD: # 1. load data
+
+## CODE:
+train = pd.read_csv(PATH + "train.csv")
+test  = pd.read_csv(PATH + "test.csv")
+if DEBUG:
+    train = train.sample(min(30000, len(train)), random_state=0).reset_index(drop=True)
+    test  = test.head(5000).reset_index(drop=True)
+orig = None
+if ORIGINAL_PATH and os.path.exists(ORIGINAL_PATH):
+    orig = pd.read_csv(ORIGINAL_PATH)
+    if TARGET not in orig.columns:
+        print("original file has no", TARGET, "-> ignored"); orig = None
+    else:
+        if DEBUG: orig = orig.head(5000)
+        print("original rows added to training folds:", len(orig))
+test_ids = test["id"].values if "id" in test.columns else np.arange(len(test))
+y = train[TARGET].astype(int).values
+print("train:", train.shape, "| test:", test.shape, "| fraud rate: %.3f%%" % (y.mean() * 100))
+train.head()
+## MD: ## 2. Exploratory analysis
+### 2.1 Class balance
+Fraud is rare, so plain accuracy is useless here. ROC AUC measures how well the model *ranks* fraud above legit.
+## CODE:
+eda = train.sample(min(100000, len(train)), random_state=0).reset_index(drop=True)
+feat_num = [c for c in eda.select_dtypes(include=[np.number]).columns if c not in ["id", TARGET]]
+feat_cat = [c for c in eda.columns if not pd.api.types.is_numeric_dtype(eda[c]) and not pd.api.types.is_bool_dtype(eda[c])]
+print(f"{len(feat_num)} numeric | {len(feat_cat)} categorical features")
+
+fig, ax = plt.subplots(1, 2, figsize=(10, 4))
+vc = eda[TARGET].value_counts().sort_index()
+sns.barplot(x=vc.index.astype(str), y=vc.values, ax=ax[0], palette=["#4C72B0", "#C44E52"][:len(vc)])
+ax[0].set_title("Class counts (log scale)"); ax[0].set_yscale("log")
+for i, v in enumerate(vc.values):
+    ax[0].text(i, v, f"{v:,}", ha="center", va="bottom")
+ax[1].pie(vc.values, labels=["Legit", "Fraud"][:len(vc)], autopct="%1.2f%%",
+          colors=["#4C72B0", "#C44E52"][:len(vc)], startangle=90)
+ax[1].set_title("Fraud share")
+plt.tight_layout(); plt.show()
+## MD: # missing value
+## CODE:
+miss = eda.isna().mean().sort_values(ascending=False)
+miss = miss[miss > 0]
+if len(miss):
+    plt.figure(figsize=(8, max(2, 0.3 * len(miss))))
+    sns.barplot(x=miss.values * 100, y=miss.index, color="#DD8452")
+    plt.title("Missing values (%)"); plt.xlabel("%"); plt.show()
+else:
+    print("✅ No missing values.")
+## MD: ### 2.3 Feature distributions: fraud vs legit
+Features whose two curves separate are the ones the model can use.
+## CODE:
+cols = feat_num[:12]
+if cols:
+    n = len(cols); ncol = 3; nrow = int(np.ceil(n / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(15, 3.6 * nrow))
+    axes = np.atleast_1d(axes).ravel()
+    for a, c in zip(axes, cols):
+        lo, hi = eda[c].quantile([0.01, 0.99])
+        d = eda[(eda[c] >= lo) & (eda[c] <= hi)]
+        for lab, col in [(0, "#4C72B0"), (1, "#C44E52")]:
+            s = d.loc[d[TARGET] == lab, c].dropna()
+            if s.nunique() > 1:
+                sns.kdeplot(s, ax=a, color=col, fill=True, alpha=0.3,
+                            label=("Fraud" if lab else "Legit"), common_norm=False)
+        a.set_title(c); a.legend()
+    for a in axes[n:]:
+        a.axis("off")
+    plt.suptitle("Distributions by class (1st–99th percentile)", y=1.01, fontsize=14, fontweight="bold")
+    plt.tight_layout(); plt.show()
+## MD: #### 2.4 Fraud rate by category
+## CODE:
+for c in feat_cat[:6]:
+    if eda[c].nunique() > 5000:
+        continue
+    top = eda[c].value_counts().head(15).index
+    r = eda[eda[c].isin(top)].groupby(c)[TARGET].agg(["mean", "count"]).sort_values("mean", ascending=False)
+    fig, ax = plt.subplots(figsize=(9, 3.6))
+    sns.barplot(x=r.index.astype(str), y=r["mean"] * 100, ax=ax, color="#55A868")
+    ax.axhline(eda[TARGET].mean() * 100, color="red", ls="--", label="overall rate")
+    ax.set_title(f"Fraud rate (%) by {c}"); ax.set_ylabel("%")
+    plt.xticks(rotation=45, ha="right"); ax.legend()
+    plt.tight_layout(); plt.show()
+## MD: ### 2.5 Correlations and mutual information
+Correlation catches linear relationships. Mutual information also catches non-linear ones.
+## CODE:
+use = feat_num[:25] + [TARGET]
+corr = eda[use].corr(method="spearman")
+fig, ax = plt.subplots(1, 2, figsize=(16, 6))
+sns.heatmap(corr, cmap="coolwarm", center=0, annot=len(use) <= 14, fmt=".2f", square=True,
+            cbar_kws={"shrink": 0.7}, ax=ax[0])
+ax[0].set_title("Spearman correlation")
+if feat_num:
+    Xmi = eda[feat_num].fillna(eda[feat_num].median())
+    mi = pd.Series(mutual_info_classif(Xmi, eda[TARGET], random_state=0), index=feat_num).sort_values().tail(20)
+    sns.barplot(x=mi.values, y=mi.index, color="#8172B3", ax=ax[1])
+    ax[1].set_title("Mutual information with is_fraud (top 20)")
+plt.tight_layout(); plt.show()
+## MD: ### 2.6 Train vs test drift (KS test)
+Low values mean train and test look alike, so CV scores should carry over to the leaderboard.
+## CODE:
+rows = []
+for c in feat_num:
+    if c in test.columns:
+        a = train[c].dropna().sample(min(20000, train[c].notna().sum()), random_state=0)
+        b = test[c].dropna().sample(min(20000, test[c].notna().sum()), random_state=0)
+        rows.append((c, ks_2samp(a, b).statistic))
+if rows:
+    ks = pd.DataFrame(rows, columns=["feature", "KS"]).sort_values("KS").tail(25)
+    plt.figure(figsize=(8, max(3, 0.3 * len(ks))))
+    sns.barplot(x=ks["KS"], y=ks["feature"], color="#937860")
+    plt.title("Train vs test drift (KS statistic)"); plt.show()
+## MD: ## 3. Feature engineering (automatic)
+- date/time columns → year, month, day, weekday, hour, timestamp
+- frequency encoding for categories and low-cardinality numbers
+- ratio of numeric features to their category average
+- a few category pair combinations
+## CODE:
+drop_tr = [c for c in ["id", TARGET] if c in train.columns]
+frames = [train.drop(columns=drop_tr)]
+n_comp = len(train)
+n_orig = 0
+if orig is not None:
+    frames.append(orig[[c for c in train.columns if c in orig.columns and c not in drop_tr]].reindex(columns=frames[0].columns))
+    n_orig = len(orig)
+frames.append(test.drop(columns=[c for c in ["id"] if c in test.columns]))
+full = pd.concat(frames, axis=0, ignore_index=True)
+y_all = np.concatenate([y, orig[TARGET].astype(int).values]) if n_orig else y.copy()
+orig_idx = np.arange(n_comp, n_comp + n_orig)
+n_train_all = n_comp + n_orig
+
+def is_cat(s): return not pd.api.types.is_numeric_dtype(s) and not pd.api.types.is_bool_dtype(s)
+
+for c in list(full.columns):
+    low = c.lower()
+    if not pd.api.types.is_numeric_dtype(full[c]) and any(k in low for k in ["date", "time", "dob", "trans_"]):
+        dt = pd.to_datetime(full[c], errors="coerce")
+        if dt.notna().mean() > 0.9:
+            full[c + "_year"], full[c + "_month"] = dt.dt.year, dt.dt.month
+            full[c + "_day"], full[c + "_dow"] = dt.dt.day, dt.dt.dayofweek
+            full[c + "_hour"] = dt.dt.hour
+            full[c + "_ts"] = dt.astype("int64") // 10**9
+            full = full.drop(columns=[c])
+
+cat_cols = [c for c in full.columns if is_cat(full[c])]
+base_cats = list(cat_cols)                      # raw categoricals, used for target encoding
+num_cols = [c for c in full.columns if c not in cat_cols]
+
+for c in cat_cols + [c for c in num_cols if full[c].nunique() <= 2000]:
+    full[c + "_freq"] = full[c].map(full[c].value_counts(dropna=False)).astype("float32")
+
+small_cats = [c for c in cat_cols if full[c].nunique() <= 500][:4]
+big_nums = [c for c in num_cols if full[c].nunique() > 50][:4]
+for cc in small_cats:
+    for nc in big_nums:
+        g = full.groupby(cc)[nc].transform("mean")
+        full[f"{nc}_div_mean_{cc}"] = full[nc] / (g.abs() + 1e-6)
+for i in range(min(len(small_cats), 3)):
+    for j in range(i + 1, min(len(small_cats), 3)):
+        a, b = small_cats[i], small_cats[j]
+        full[f"{a}__{b}"] = full[a].astype(str) + "_" + full[b].astype(str)
+cat_cols = [c for c in full.columns if is_cat(full[c])]
+
+X_gb = full.copy()
+for c in cat_cols:
+    X_gb[c] = X_gb[c].astype("category")
+X_cb = full.copy()
+for c in cat_cols:
+    X_cb[c] = X_cb[c].astype(str).fillna("NA")
+
+Xg_tr, Xg_te = X_gb.iloc[:n_train_all].reset_index(drop=True), X_gb.iloc[n_train_all:].reset_index(drop=True)
+Xc_tr, Xc_te = X_cb.iloc[:n_train_all].reset_index(drop=True), X_cb.iloc[n_train_all:].reset_index(drop=True)
+del full, X_gb, X_cb, frames; gc.collect()
+print("features:", Xg_tr.shape[1], "| categorical:", len(cat_cols), "| competition rows:", n_comp, "| original rows:", n_orig)
+
+# ---- out-of-fold target encoding (leak-safe: training rows use an inner K-fold, other rows use the whole training part) ----
+te_base = sorted(base_cats, key=lambda c: Xg_tr[c].nunique())[:6]
+TE_SPECS = {f"te_{c}": (c,) for c in te_base}
+for i in range(len(te_base)):
+    for j in range(i + 1, len(te_base)):
+        TE_SPECS[f"te_{te_base[i]}__{te_base[j]}"] = (te_base[i], te_base[j])
+print("target-encoding features:", len(TE_SPECS) if USE_TE else 0)
+
+def _keys(Xdf, cols):
+    k = Xdf[cols[0]].cat.codes.values.astype("int64") + 1
+    for c in cols[1:]:
+        k = k * 1_000_003 + (Xdf[c].cat.codes.values.astype("int64") + 1)
+    return k
+
+def _fit_map(k, yy, prior, m):
+    s = pd.DataFrame({"k": k, "y": yy}).groupby("k")["y"].agg(["sum", "count"])
+    return (s["sum"] + prior * m) / (s["count"] + m)
+
+def te_transform(Xtr_, ytr_, others, m=20.0, n_inner=5, seed=0):
+    """returns Xtr_ and each frame in `others` with target-encoded columns appended"""
+    if not USE_TE or not TE_SPECS:
+        return [Xtr_] + list(others)
+    prior = float(np.mean(ytr_))
+    tr_cols, oth_cols = {}, [{} for _ in others]
+    kf = StratifiedKFold(n_inner, shuffle=True, random_state=seed)
+    for name, cols in TE_SPECS.items():
+        k_tr = _keys(Xtr_, cols)
+        te_tr = np.full(len(k_tr), prior)
+        for a_, b_ in kf.split(k_tr, ytr_):
+            mp = _fit_map(k_tr[a_], ytr_[a_], prior, m)
+            te_tr[b_] = pd.Series(k_tr[b_]).map(mp).fillna(prior).values
+        tr_cols[name] = te_tr.astype("float32")
+        mp = _fit_map(k_tr, ytr_, prior, m)
+        for d, o in zip(oth_cols, others):
+            d[name] = pd.Series(_keys(o, cols)).map(mp).fillna(prior).values.astype("float32")
+    out = [pd.concat([Xtr_.reset_index(drop=True), pd.DataFrame(tr_cols)], axis=1)]
+    for o, d in zip(others, oth_cols):
+        out.append(pd.concat([o.reset_index(drop=True), pd.DataFrame(d)], axis=1))
+    return out
+## MD: ## 4. Hyperparameter tuning with Optuna (GPU-friendly)
+- Tuned on a 250k-row subsample with one holdout split and a high learning rate, so each trial is quick.
+- The first trial is my previous best setting, so tuning can only match or beat it.
+- **Search ranges are widened** on the edges where my first run hit the limit (LightGBM `num_leaves` 19 near the lower bound,
+  XGBoost `colsample_bytree` 0.34 near the lower bound, CatBoost `depth` 6 at the lower bound).
+- LightGBM stays on CPU; XGBoost and CatBoost use the GPU when `USE_GPU = True`.
+## CODE:
+idx_sub, _ = train_test_split(np.arange(n_comp), train_size=min(TUNE_ROWS, n_comp), stratify=y, random_state=SEED)
+tr_i, va_i = train_test_split(idx_sub, test_size=0.25, stratify=y[idx_sub], random_state=SEED)
+tr_full_i = np.concatenate([tr_i, orig_idx])           # original rows only ever go into the training part
+
+def holdout(Xdf):
+    return Xdf.iloc[tr_full_i], y_all[tr_full_i], Xdf.iloc[va_i], y[va_i]
+
+TUNE_EST = 300 if DEBUG else 4000
+HG = holdout(Xg_tr)                                    # (Xa, ya, Xv, yv) for LightGBM
+HC = holdout(Xc_tr)                                    # same rows for CatBoost
+if "xgb" in MODELS:
+    _Xa, _Xv = te_transform(HG[0], HG[1], [HG[2]], seed=SEED)
+    HX = (_Xa, HG[1], _Xv, HG[3])                      # same rows plus target-encoded columns
+
+def obj_lgb(trial):
+    p = dict(n_estimators=TUNE_EST, learning_rate=TUNE_LR,
+             num_leaves=trial.suggest_int("num_leaves", 2, 32, log=True),
+             min_child_samples=trial.suggest_int("min_child_samples", 20, 600, log=True),
+             subsample=trial.suggest_float("subsample", 0.5, 1.0), subsample_freq=1,
+             colsample_bytree=trial.suggest_float("colsample_bytree", 0.3, 1.0),
+             reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 10, log=True),
+             reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 20, log=True),
+             cat_smooth=trial.suggest_float("cat_smooth", 5, 100),
+             min_split_gain=trial.suggest_float("min_split_gain", 0, 0.6),
+             random_state=SEED, n_jobs=-1, verbose=-1)
+    Xa, ya, Xv, yv = HG
+    m = lgb.LGBMClassifier(**p)
+    m.fit(Xa, ya, eval_set=[(Xv, yv)], eval_metric="auc",
+          callbacks=[lgb.early_stopping(100, verbose=False), lgb.log_evaluation(0)])
+    return roc_auc_score(yv, m.predict_proba(Xv)[:, 1])
+
+def obj_xgb(trial):
+    p = dict(n_estimators=TUNE_EST, learning_rate=TUNE_LR,
+             max_depth=trial.suggest_int("max_depth", 1, 6),
+             min_child_weight=trial.suggest_float("min_child_weight", 1, 50, log=True),
+             subsample=trial.suggest_float("subsample", 0.5, 1.0),
+             colsample_bytree=trial.suggest_float("colsample_bytree", 0.1, 1.0),
+             gamma=trial.suggest_float("gamma", 0, 10),
+             reg_alpha=trial.suggest_float("reg_alpha", 1e-3, 20, log=True),
+             reg_lambda=trial.suggest_float("reg_lambda", 1e-3, 50, log=True),
+             max_bin=trial.suggest_int("max_bin", 64, 512),
+             scale_pos_weight=trial.suggest_categorical("scale_pos_weight", [1, 2, 4, 8]),
+             tree_method="hist", device="cuda" if USE_GPU else "cpu",
+             enable_categorical=True, max_cat_to_onehot=1, eval_metric="auc",
+             early_stopping_rounds=100, random_state=SEED)
+    Xa, ya, Xv, yv = HX
+    m = xgb.XGBClassifier(**p)
+    m.fit(Xa, ya, eval_set=[(Xv, yv)], verbose=False)
+    return roc_auc_score(yv, m.predict_proba(Xv)[:, 1])
+
+def obj_cat(trial):
+    p = dict(iterations=TUNE_EST, learning_rate=0.08 if not DEBUG else 0.15,
+             depth=trial.suggest_int("depth", 3, 7),
+             l2_leaf_reg=trial.suggest_float("l2_leaf_reg", 1, 30, log=True),
+             random_strength=trial.suggest_float("random_strength", 0.1, 5, log=True),
+             bootstrap_type="Bayesian",
+             bagging_temperature=trial.suggest_float("bagging_temperature", 0, 3),
+             border_count=trial.suggest_int("border_count", 32, 254),
+             max_ctr_complexity=trial.suggest_int("max_ctr_complexity", 1, 4),
+             cat_features=cat_cols, od_type="Iter", od_wait=100, random_seed=SEED, verbose=0)
+    if USE_GPU:
+        p.update(task_type="GPU", devices="0", eval_metric="Logloss")   # avoids the "AUC not on GPU" notice
+    else:
+        p.update(eval_metric="AUC", thread_count=-1)
+    Xa, ya, Xv, yv = HC
+    m = CatBoostClassifier(**p)
+    m.fit(Xa, ya, eval_set=(Xv, yv), use_best_model=True)
+    return roc_auc_score(yv, m.predict_proba(Xv)[:, 1])
+
+OBJ = {"lgb": obj_lgb, "cat": obj_cat, "xgb": obj_xgb}
+BEST, STUDIES = {}, {}
+for name in MODELS:
+    t0 = time.time()
+    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=SEED))
+    study.enqueue_trial(PREV_BEST[name])
+    study.optimize(OBJ[name], n_trials=TRIALS[name], timeout=TIME_BUDGET, gc_after_trial=True)
+    BEST[name], STUDIES[name] = study.best_params, study
+    print(f"{name}: holdout AUC {study.best_value:.5f} | trials {len(study.trials)} | {(time.time()-t0)/60:.1f} min")
+    print("   ", {k: (round(v, 4) if isinstance(v, float) else v) for k, v in study.best_params.items()})
+## MD: ### 4.1 Did tuning help? Best score so far, trial by trial
+The first point is my earlier best setting; every later gain is new. A flat line means that model is already near its ceiling.
+## CODE:
+SIZE = {"lgb": "num_leaves", "cat": "depth", "xgb": "max_depth"}
+fig, ax = plt.subplots(2, len(MODELS), figsize=(6 * len(MODELS), 8), squeeze=False)
+for j, name in enumerate(MODELS):
+    st = STUDIES[name]
+    vals = np.array([t.value for t in st.trials if t.value is not None])
+    ax[0, j].plot(np.arange(1, len(vals) + 1), np.maximum.accumulate(vals), lw=2)
+    ax[0, j].scatter(np.arange(1, len(vals) + 1), vals, s=12, alpha=0.5)
+    ax[0, j].set_title(f"{name.upper()}: holdout AUC"); ax[0, j].set_xlabel("trial")
+    xs = np.array([t.params[SIZE[name]] for t in st.trials if t.value is not None])
+    ax[1, j].scatter(xs, vals, s=14, alpha=0.6, color="#C44E52")
+    ax[1, j].set_xlabel(SIZE[name]); ax[1, j].set_ylabel("holdout AUC"); ax[1, j].set_title(f"{name.upper()}: tree size vs score")
+    if name == "lgb": ax[1, j].set_xscale("log")
+plt.tight_layout(); plt.show()
+## MD: ## 5. Final training: out-of-fold predictions
+Tuned parameters, lower learning rate, 10-fold CV. Every score below comes from rows the model did not train on.
+XGBoost is cheap on a GPU, so it gets three seeds.
+## CODE:
+def build(kind, seed):
+    p = dict(BEST[kind]); lr_ = FINAL_LR[kind]
+    if kind == "lgb":
+        return lgb.LGBMClassifier(n_estimators=FINAL_N_EST, learning_rate=lr_, subsample_freq=1,
+                                  random_state=seed, n_jobs=-1, verbose=-1, **p)
+    if kind == "xgb":
+        return xgb.XGBClassifier(n_estimators=FINAL_N_EST, learning_rate=lr_, tree_method="hist",
+                                 device="cuda" if USE_GPU else "cpu", enable_categorical=True,
+                                 max_cat_to_onehot=1, eval_metric="auc", early_stopping_rounds=200,
+                                 random_state=seed, **p)
+    extra = dict(task_type="GPU", devices="0", eval_metric="Logloss") if USE_GPU else dict(eval_metric="AUC", thread_count=-1)
+    return CatBoostClassifier(iterations=FINAL_N_EST, learning_rate=lr_, bootstrap_type="Bayesian",
+                              cat_features=cat_cols, od_type="Iter", od_wait=200, random_seed=seed,
+                              verbose=0, **p, **extra)
+
+F_OOF, F_PRED, FOLD_AUC, ITERS = {}, {}, {}, {}
+for kind in MODELS:
+    Xtr_ = Xc_tr if kind == "cat" else Xg_tr
+    Xte_ = Xc_te if kind == "cat" else Xg_te
+    seeds = FINAL_SEEDS[kind]
+    oof, pred, iters, fold_auc = np.zeros(n_comp), np.zeros(len(Xte_)), [], []
+    for si, seed in enumerate(seeds):
+        for f, (tr, va) in enumerate(StratifiedKFold(FINAL_FOLDS, shuffle=True, random_state=seed).split(np.zeros(n_comp), y)):
+            tr_full = np.concatenate([tr, orig_idx])
+            Xa, ya, Xv = Xtr_.iloc[tr_full], y_all[tr_full], Xtr_.iloc[va]
+            Xt = Xte_
+            if kind == "xgb":
+                Xa, Xv, Xt = te_transform(Xa, ya, [Xv, Xte_], seed=seed + f)
+            m = build(kind, seed + f)
+            if kind == "lgb":
+                m.fit(Xa, ya, eval_set=[(Xv, y[va])], eval_metric="auc",
+                      callbacks=[lgb.early_stopping(200, verbose=False), lgb.log_evaluation(0)])
+                iters.append(m.best_iteration_ or FINAL_N_EST)
+            elif kind == "xgb":
+                m.fit(Xa, ya, eval_set=[(Xv, y[va])], verbose=False)
+                iters.append(m.best_iteration + 1)
+            else:
+                m.fit(Xa, ya, eval_set=(Xv, y[va]), use_best_model=True)
+                iters.append(m.get_best_iteration() + 1)
+            pv = m.predict_proba(Xv)[:, 1]
+            oof[va] += pv / len(seeds)
+            pred += m.predict_proba(Xt)[:, 1] / (FINAL_FOLDS * len(seeds))
+            a_ = roc_auc_score(y[va], pv)
+            if si == 0:
+                fold_auc.append(a_)
+            print(f"{kind} seed {seed} fold {f+1}/{FINAL_FOLDS}  AUC {a_:.5f}")
+            del Xa, Xv, Xt, m; gc.collect()
+    F_OOF[kind], F_PRED[kind], FOLD_AUC[kind], ITERS[kind] = oof, pred, fold_auc, iters
+    hit = int(np.sum(np.array(iters) >= FINAL_N_EST - 1))
+    print(f"==> {kind}: OOF AUC {roc_auc_score(y, oof):.5f} | mean best_iter {np.mean(iters):.0f} of {FINAL_N_EST} | runs that hit the limit: {hit}/{len(iters)}\n")
+
+
+from scipy.stats import rankdata
+
+TARGET = "is_fraud"
+files = { "/kaggle/input/notebooks/saamhm/eda-blend-lb-0-95239-credit-card-fraud/submission_final.csv":1,"/kaggle/input/notebooks/malyshevdanil/fraud-signal-lab-gpt-2-and-glm-fusion/submission.csv":2}
+
+dfs = []
+for i, p in enumerate(files):
+    d = pd.read_csv(p).set_index("id")[[TARGET]].rename(columns={TARGET: f"f{i}"})
+    dfs.append(d)
+P = pd.concat(dfs, axis=1, join="inner")
+assert P.notna().all().all()
+print("rows:", len(P))
+print(P.corr(method="spearman").round(4))      # drop near-duplicates (>0.999)
+
+w = np.array(list(files.values()), float); w /= w.sum()
+R = np.column_stack([rankdata(P.iloc[:, i]) / len(P) for i in range(P.shape[1])])
+out = pd.DataFrame({"id": P.index, TARGET: R @ w})
+out.to_csv("/kaggle/working/submission_final.csv", index=False)
+print(out.head())
+
+dfs = []
+for i, p in enumerate(files):
+    d = pd.read_csv(p).set_index("id")[[TARGET]].rename(columns={TARGET: f"f{i}"})
+    dfs.append(d)
+P = pd.concat(dfs, axis=1, join="inner")
+assert P.notna().all().all()
+print("rows:", len(P))
+print(P.corr(method="spearman").round(4))      # drop near-duplicates (>0.999)
+
+w = np.array(list(files.values()), float); w /= w.sum()
+R = np.column_stack([rankdata(P.iloc[:, i]) / len(P) for i in range(P.shape[1])])
+out = pd.DataFrame({"id": P.index, TARGET: R @ w})
+out.to_csv("/kaggle/working/submission_final.csv", index=False)
+print(out.head())
+## MD: ### 5.1 Fold-by-fold comparison
+Left: AUC of each model in each fold. Right: how many folds each model wins.
+If the lines sit almost on top of each other, the model ranking is mostly noise.
+## CODE:
+FA = pd.DataFrame(FOLD_AUC); FA.index = np.arange(1, len(FA) + 1)
+pairs = [(a, b) for i, a in enumerate(FA.columns) for b in FA.columns[i + 1:]]
+fig, ax = plt.subplots(1, 3, figsize=(17, 4.5))
+for c in FA.columns:
+    ax[0].plot(FA.index, FA[c], marker="o", label=c)
+ax[0].set_title("AUC per fold"); ax[0].set_xlabel("fold"); ax[0].legend()
+if pairs:
+    d_mean = [(FA[a] - FA[b]).mean() for a, b in pairs]
+    d_se = [(FA[a] - FA[b]).std() / np.sqrt(len(FA)) for a, b in pairs]
+    lab = [f"{a} - {b}" for a, b in pairs]
+    ax[1].barh(lab, d_mean, xerr=d_se, color="#4C72B0"); ax[1].axvline(0, color="k", lw=0.8)
+    ax[1].set_title("Mean paired AUC gap (± 1 SE)")
+    wins_ = [int((FA[a] > FA[b]).sum()) for a, b in pairs]
+    ax[2].barh(lab, wins_, color="#55A868"); ax[2].set_xlim(0, len(FA)); ax[2].axvline(len(FA) / 2, color="k", ls="--", lw=0.8)
+    ax[2].set_title("Folds where the first model wins")
+plt.tight_layout(); plt.show()
+print(FA.round(5).to_string())
+print("\nmean fold AUC:", FA.mean().round(5).to_dict(), "| std across folds:", FA.std().round(4).to_dict())
+## MD: ## 6. Blend the three models
+Rank-average weights are picked on the out-of-fold predictions. Rank averaging suits AUC because only the order matters.
+## CODE:
+R = {k: rk(v) for k, v in F_OOF.items()}
+ks_ = list(R)
+best_auc, best_w = 0, None
+if len(ks_) == 1:
+    best_auc, best_w = roc_auc_score(y, R[ks_[0]]), (1.0,)
+else:
+    grid = np.arange(0, 1.001, 0.05)
+    import itertools
+    for w in itertools.product(grid, repeat=len(ks_) - 1):
+        if sum(w) > 1 + 1e-9: continue
+        ww = list(w) + [1 - sum(w)]
+        a_ = roc_auc_score(y, sum(wi * R[k] for wi, k in zip(ww, ks_)))
+        if a_ > best_auc: best_auc, best_w = a_, tuple(round(float(x), 2) for x in ww)
+equal_auc = roc_auc_score(y, sum(R[k] for k in ks_) / len(ks_))
+blend_oof = sum(wi * R[k] for wi, k in zip(best_w, ks_))
+own_te = sum(wi * rk(F_PRED[k]) for wi, k in zip(best_w, ks_))
+summary = pd.Series({**{k: roc_auc_score(y, v) for k, v in F_OOF.items()},
+                     "equal-weight blend": equal_auc, "tuned-weight blend": best_auc}).sort_values()
+print(summary.round(5).to_string()); print("weights:", dict(zip(ks_, best_w)))
+print("note: weights are picked on the same OOF scores, so the tuned blend is slightly optimistic; the equal-weight line is the fairer check.")
+## MD: ### 6.1 Result plots
+## CODE:
+fig, ax = plt.subplots(1, 3, figsize=(18, 5))
+for k, v in F_OOF.items():
+    fpr, tpr, _ = roc_curve(y, v); ax[0].plot(fpr, tpr, lw=1.2, label=f"{k} ({auc(fpr, tpr):.4f})")
+fpr, tpr, _ = roc_curve(y, blend_oof); ax[0].plot(fpr, tpr, "k", lw=2.2, label=f"BLEND ({auc(fpr, tpr):.4f})")
+ax[0].plot([0, 1], [0, 1], "k--", lw=0.8); ax[0].set_title("ROC curves (out-of-fold)"); ax[0].legend(fontsize=8)
+ax[0].set_xlabel("False positive rate"); ax[0].set_ylabel("True positive rate")
+sns.kdeplot(blend_oof[y == 0], fill=True, alpha=0.35, label="Legit", color="#4C72B0", common_norm=False, ax=ax[1])
+sns.kdeplot(blend_oof[y == 1], fill=True, alpha=0.35, label="Fraud", color="#C44E52", common_norm=False, ax=ax[1])
+ax[1].set_title("Blend rank score by class"); ax[1].legend()
+order = np.argsort(-blend_oof); cum = np.cumsum(y[order]) / y.sum(); xx = np.arange(1, len(y) + 1) / len(y)
+ax[2].plot(xx * 100, cum * 100, color="#C44E52", lw=2, label="Model"); ax[2].plot([0, 100], [0, 100], "k--", label="Random")
+ax[2].set_xlabel("% of transactions reviewed (highest score first)"); ax[2].set_ylabel("% of fraud caught")
+ax[2].set_title("Cumulative gains"); ax[2].legend()
+plt.tight_layout(); plt.show()
+k10 = int(0.1 * len(y)); print(f"Reviewing the top 10% of transactions catches {100 * y[order][:k10].sum() / y.sum():.1f}% of all fraud.")
+## MD: ###  How similar are the models?
+Low similarity means a blend has more room to help.
+## MD: ### 6.2 What drives the predictions?
+XGBoost gain importance (left) and how similar the three models are (right). Low similarity means a blend has more to gain.
+## CODE:
+Xi = te_transform(Xg_tr.iloc[np.arange(n_comp)], y, [], seed=SEED)[0]
+iters_m = int(np.mean(ITERS["xgb"])) if "xgb" in ITERS else 300
+bp = dict(BEST.get("xgb", PREV_BEST["xgb"]))
+imp_m = xgb.XGBClassifier(n_estimators=min(iters_m, 400 if DEBUG else iters_m), learning_rate=FINAL_LR["xgb"], tree_method="hist",
+                          device="cuda" if USE_GPU else "cpu", enable_categorical=True, max_cat_to_onehot=1,
+                          importance_type="gain", random_state=SEED, **bp)
+imp_m.fit(Xi, y)
+imp_all = pd.Series(imp_m.feature_importances_, index=Xi.columns).sort_values()
+imp = imp_all.tail(20)
+fig, ax = plt.subplots(1, 1, figsize=(8, 7))
+sns.barplot(x=imp.values, y=imp.index, color="#55A868", ax=ax); ax.set_title("Top 20 features (XGBoost gain)")
+plt.tight_layout(); plt.show()
+top_raw = [f for f in imp_all.index[::-1] if not f.startswith("te_")][:4]
+fig, ax = plt.subplots(1, 4, figsize=(20, 4))
+for a, f in zip(ax, top_raw):
+    s = Xg_tr[f].iloc[:n_comp]
+    if str(s.dtype) == "category":
+        top = s.value_counts().head(12).index
+        r = pd.DataFrame({"g": s.astype(str), "y": y})[s.isin(top).values].groupby("g")["y"].mean() * 100
+        r.sort_values().plot.barh(ax=a, color="#8172B3")
+    else:
+        q = pd.qcut(s, 10, duplicates="drop")
+        r = pd.Series(y).groupby(q.values, observed=True).mean() * 100
+        a.plot(range(len(r)), r.values, marker="o", color="#8172B3"); a.set_xlabel("decile (low to high)")
+    a.axhline(y.mean() * 100, color="red", ls="--", lw=1); a.set_title(f"Fraud rate (%) by {f}")
+plt.tight_layout(); plt.show()
+del imp_m, Xi; gc.collect()
+## CODE:
+plt.figure(figsize=(5.5, 4.5))
+sns.heatmap(pd.DataFrame(R).corr(method="spearman"), annot=True, fmt=".4f", cmap="YlGnBu", square=True)
+plt.title("Spearman correlation between models"); plt.show()
+## MD: ## 7. Public submissions: how different are they?
+Blending only helps when the files make different mistakes. A correlation above ~0.999 means they are essentially the same predictions.
+## CODE:
+pub_te, pub_cols = None, []
+if PUBLIC_FILES:
+    ws_ = []
+    for p_, w_ in PUBLIC_FILES.items():
+        if not os.path.exists(p_):
+            print("not found, skipped:", p_); continue
+        d_ = pd.read_csv(p_).set_index("id")[TARGET].reindex(test_ids)
+        if d_.isna().any():
+            print("missing ids, skipped:", p_); continue
+        pub_cols.append(rk(d_.values)); ws_.append(w_)
+    if pub_cols:
+        ws_ = np.array(ws_, float) / np.sum(ws_)
+        pub_te = np.column_stack(pub_cols) @ ws_
+        D = pd.DataFrame(np.column_stack(pub_cols + [own_te]),
+                         columns=[f"public_{i+1}" for i in range(len(pub_cols))] + ["OWN tuned"])
+        C = D.corr(method="spearman")
+        fig, ax = plt.subplots(1, 2, figsize=(14, 5.5))
+        sns.heatmap(C, annot=True, fmt=".4f", cmap="YlGnBu", ax=ax[0]); ax[0].set_title("Spearman correlation")
+        ii = np.random.RandomState(0).choice(len(D), min(5000, len(D)), replace=False)
+        ax[1].scatter(pub_te[ii], own_te[ii], s=4, alpha=0.4, color="#8172B3")
+        ax[1].set_xlabel("Public blend (rank)"); ax[1].set_ylabel("Own tuned blend (rank)"); ax[1].set_title("Own model vs public blend")
+        plt.tight_layout(); plt.show()
+        pub_only = C.iloc[:len(pub_cols), :len(pub_cols)].values
+        if len(pub_cols) > 1 and pub_only[np.triu_indices(len(pub_cols), 1)].min() > 0.999:
+            print("The public files are nearly identical (all pairwise correlations > 0.999), so blending them with each other adds very little.")
+        print("Correlation of own model with the public blend:", round(float(np.corrcoef(rk(pub_te), own_te)[0, 1]), 4))
+else:
+    print("No public files set. Add paths to PUBLIC_FILES to run this section.")
+## MD: ## 8. Final files
+- `sub_own_only.csv`: my tuned, CV-validated blend only
+- `sub_blend_pub30/50/70.csv`: own model mixed with the public blend at different weights
+- `submission.csv`: the main file (own blend, plus the public blend at `PUB_WEIGHT` when public files are set)
+
+I can't validate the public files with out-of-fold scores, so the mix weight is a choice, not a measurement.
+I submit one candidate at a time and keep my two best, one of them based on my own CV-validated model.
+## CODE:
+def save(arr, fname):
+    out = pd.DataFrame({"id": test_ids, TARGET: arr})
+    assert out[TARGET].notna().all() and len(out) == len(test)
+    out.to_csv(OUT_DIR + fname, index=False); print("saved", fname, out.shape)
+
+save(own_te, "sub_own_only.csv")
+if pub_te is not None:
+    for w_ in [0.3, 0.5, 0.7]:
+        save((1 - w_) * own_te + w_ * pub_te, f"sub_blend_pub{int(w_ * 100)}.csv")
+    save((1 - PUB_WEIGHT) * own_te + PUB_WEIGHT * pub_te, "submission.csv")
+else:
+    save(own_te, "submission.csv")
+print(f"\nOWN tuned blend OOF AUC: {best_auc:.5f}  (equal weights: {equal_auc:.5f})")
+if DEBUG:
+    print("DEBUG mode: files cover a small sample only. Set DEBUG = False for the real submission.")
+## MD: ## Conclusion
+- Tuning gave small, real gains: XGBoost +0.0016, CatBoost +0.0009, LightGBM about +0.0001 compared with the default settings. The blend reaches about 0.9469 OOF.
+- The three models are close, so the choice between them matters less than the features and the data.
+- XGBoost on GPU is the cheapest model to tune and to run with several seeds.
+- Public submissions that correlate at 0.9995+ add little to each other; a model with different errors adds more.
+- Ideas I have not tried: the original dataset, features built from the real column meanings, more seeds for CatBoost.
+
+## MD: ##  Credits & Acknowledgements
+
+This notebook builds on the work of other Kaggle authors. Thank you to:
+
+**Public notebooks whose submissions I blended**
+- **samsul** — [EDA | blend | LB-0.95197 | Credit Card Fraud](https://www.kaggle.com/code/saamhm/eda-blend-lb-0-95197-credit-card-fraud)
+- **malyshevdanil** — [Fraud Signal Lab | GPT-2 and GLM Fusion
+](https://www.kaggle.com/code/malyshevdanil/fraud-signal-lab-gpt-2-and-glm-fusion)
+- **Areeb Ali ** — [
+S6E11 | Wide Stack + Shallow-Tree Fusion | 0.95291
+](https://www.kaggle.com/code/areebbb/s6e11-wide-stack-shallow-tree-fusion-0-95291)
+
+
+
+
+**Competition**
+- [Kaggle Playground Series S6E11: Predicting Credit Card Fraud](https://www.kaggle.com/competitions/playground-series-s6e11)
+
+**What is mine vs. what is borrowed**
+- My own work: the EDA, the feature engineering, the LightGBM/XGBoost/CatBoost models with 5-fold CV (OOF AUC 0.9464), and the rank-blend code.
+- Borrowed: the public submission files above, which I rank-blend with my own predictions. Their scores belong to their authors.
+
+If you find this useful, please also upvote the notebooks above. Feedback and suggestions are welcome in the comments.

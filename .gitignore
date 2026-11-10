@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pt
+out/*/O.npy
+out/*/T.npy
+kaggle.json
+*.zip

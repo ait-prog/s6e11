@@ -1,0 +1,902 @@
+## MD: # Cell 1: Dependencies & Environment Setup [Code]
+## CODE:
+# CELL 1: Install PyTabKit (for RealMLP on GPU) and HuggingFace Tokenizers
+import subprocess, sys
+
+def install_if_missing(pkg_spec: str, import_name: str):
+    try:
+        __import__(import_name)
+    except ImportError:
+        print(f"Installing {pkg_spec}...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--quiet", pkg_spec])
+
+install_if_missing("pytabkit==1.7.3", "pytabkit")
+install_if_missing("tokenizers", "tokenizers")
+print("Environment dependencies verified.")
+## MD: # Cell 2: Imports, GPU Detection & Time Budget Manager [Code]
+## CODE:
+# CELL 2: Core Imports, Multi-GPU Check & Strict 50-Minute Time Budget Manager
+from pathlib import Path
+import os, glob, json, time, gc, hashlib, re, warnings
+import numpy as np
+import pandas as pd
+import lightgbm as lgb
+import xgboost as xgb
+from scipy import sparse
+from scipy.stats import rankdata
+from scipy.special import expit
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold
+from sklearn.preprocessing import OneHotEncoder, SplineTransformer, StandardScaler
+
+warnings.filterwarnings("ignore")
+
+try:
+    import torch
+    GPU_AVAILABLE = torch.cuda.is_available()
+    N_GPUS = torch.cuda.device_count() if GPU_AVAILABLE else 0
+except ImportError:
+    GPU_AVAILABLE = False
+    N_GPUS = 0
+
+SEED = 42
+N_FOLDS = 5
+TARGET = "is_fraud"
+N_JOBS = os.cpu_count() or 4
+SMOKE = os.environ.get("SMOKE") == "1"  # Set SMOKE=1 for a 60-second dry run
+WORK_DIR = Path("/kaggle/working")
+PREDS_DIR = WORK_DIR / "preds"
+PREDS_DIR.mkdir(parents=True, exist_ok=True)
+
+np.random.seed(SEED)
+if GPU_AVAILABLE:
+    torch.manual_seed(SEED)
+
+class TimeBudgetManager:
+    """Manages execution time budget across notebook phases so runs never timeout."""
+    def __init__(self, total_minutes: float = 60.0, reserve_meta_minutes: float = 4.5):
+        self.t0 = time.time()
+        self.total_seconds = total_minutes * 60.0
+        self.reserve_seconds = reserve_meta_minutes * 60.0
+
+    def elapsed_seconds(self) -> float:
+        return time.time() - self.t0
+
+    def elapsed_minutes(self) -> float:
+        return self.elapsed_seconds() / 60.0
+
+    def remaining_Train_minutes(self) -> float:
+        rem = (self.total_seconds - self.reserve_seconds) - self.elapsed_seconds()
+        return max(0.0, rem / 60.0)
+
+    def can_run(self, estimated_minutes: float, task_name: str) -> bool:
+        rem = self.remaining_Train_minutes()
+        if SMOKE or rem >= estimated_minutes:
+            print(f"[{self.elapsed_minutes():5.1f}m elapsed | {rem:5.1f}m train budget left] Starting: {task_name}")
+            return True
+        print(f"[{self.elapsed_minutes():5.1f}m elapsed | {rem:5.1f}m train budget left] SKIPPING {task_name} (needs ~{estimated_minutes:.1f}m) to preserve meta-ensemble budget.")
+        return False
+
+BUDGET = TimeBudgetManager(total_minutes=180.0, reserve_meta_minutes=4.5)
+print(f"CPUs: {N_JOBS} | GPU Available: {GPU_AVAILABLE} (Count: {N_GPUS})")
+## MD: # Cell 3: Automated Input & Artifact Bank Discovery [Code]
+## CODE:
+# CELL 3: Auto-Discovery of Competition CSVs, Original Dataset, Tokenizer & Pre-Computed Model Banks
+def discover_all_input_banks(n_train: int = 699960, n_test: int = 299984) -> dict:
+    """
+    Recursively discovers all attached Kaggle competition CSVs, tokenizer JSONs, and 
+    pre-computed OOF / Test / Full-Refit prediction banks (.npy, .npz, .csv).
+    """
+    search_roots = [
+        Path(os.environ.get("INPUT_DIR", "/kaggle/input")),
+        Path.cwd(),
+        Path("../input"),
+        Path("../submissions"),
+        Path("inputs"),
+    ]
+    csv_files, npy_files, npz_files, json_files = [], [], [], []
+    for root in search_roots:
+        if root.exists():
+            csv_files.extend(root.rglob("*.csv"))
+            npy_files.extend(root.rglob("*.npy"))
+            npz_files.extend(root.rglob("*.npz"))
+            json_files.extend(root.rglob("*.json"))
+
+    discovered = {
+        "datasets": {},
+        "oof_full_pairs": {},
+        "oof_test_pairs": {},
+        "submission_csvs": {},
+        "json": {},
+    }
+
+    # 1. Discover Core Datasets & External Submission CSVs
+    for p in sorted(set(csv_files)):
+        if WORK_DIR in p.parents:
+            continue
+        name = p.name.lower()
+        if name == "train.csv" and ("s6e11" in str(p).lower() or "train" not in discovered["datasets"]):
+            discovered["datasets"]["train"] = p
+        elif name == "test.csv" and ("s6e11" in str(p).lower() or "test" not in discovered["datasets"]):
+            discovered["datasets"]["test"] = p
+        elif name == "sample_submission.csv" and ("s6e11" in str(p).lower() or "sample_submission" not in discovered["datasets"]):
+            discovered["datasets"]["sample_submission"] = p
+        elif "credit_card_fraud_2026.csv" in name:
+            discovered["datasets"]["orig"] = p
+        elif name not in {"train.csv", "test.csv", "sample_submission.csv", "credit_card_fraud_2026.csv"}:
+            try:
+                df = pd.read_csv(p)
+                if len(df) == n_test and TARGET in df.columns:
+                    key = f"{p.parent.name}/{p.name}"
+                    discovered["submission_csvs"][key] = df[TARGET].to_numpy(dtype=np.float64)
+                    print(f"Loaded external submission CSV [{key}] with {len(df)} rows.")
+            except Exception:
+                pass
+
+    # 2. Discover JSON files (Tokenizer & Manifests)
+    for p in sorted(set(json_files)):
+        if WORK_DIR not in p.parents:
+            discovered["json"][p.name] = p
+
+    # 3. Discover .npy OOF + Full-Refit / Test Prediction Pairs
+    all_npy = [p for p in sorted(set(npy_files)) if WORK_DIR not in p.parents]
+    for p in all_npy:
+        fname = p.name
+        base_name = None
+        if fname.startswith("oof_") and fname.endswith(".npy"):
+            base_name = fname[4:-4]
+        elif fname.endswith("_oof.npy"):
+            base_name = fname[:-8]
+        if base_name is None:
+            continue
+
+        try:
+            oof_arr = np.load(p)
+        except Exception:
+            continue
+        if len(oof_arr) != n_train or not np.isfinite(oof_arr).all():
+            continue
+
+        # Look for matching _full.npy first (100% refit test predictions)
+        full_matches = [
+            x for x in all_npy
+            if x.name in {f"{base_name}_full.npy", f"full_{base_name}.npy"}
+        ]
+        # Prefer same parent directory if multiple exist
+        same_dir_full = [x for x in full_matches if x.parent == p.parent]
+        chosen_full = (same_dir_full or full_matches or [None])[0]
+
+        if chosen_full is not None:
+            try:
+                full_arr = np.load(chosen_full)
+                if len(full_arr) == n_test and np.isfinite(full_arr).all():
+                    owner = p.parent.parent.name if p.parent.name in {"oof", "preds"} else p.parent.name
+                    key = f"{owner}:{base_name}" if base_name in discovered["oof_full_pairs"] else base_name
+                    discovered["oof_full_pairs"][key] = (oof_arr.astype(np.float64), full_arr.astype(np.float64))
+                    print(f"Discovered OOF+FULL pair: [{key}]")
+                    continue
+            except Exception:
+                pass
+
+        # Otherwise look for 5-fold averaged _test.npy or test_.npy
+        test_matches = [
+            x for x in all_npy
+            if x.name in {f"{base_name}_test.npy", f"test_{base_name}.npy"}
+        ]
+        same_dir_test = [x for x in test_matches if x.parent == p.parent]
+        chosen_test = (same_dir_test or test_matches or [None])[0]
+
+        if chosen_test is not None:
+            try:
+                test_arr = np.load(chosen_test)
+                if len(test_arr) == n_test and np.isfinite(test_arr).all():
+                    owner = p.parent.parent.name if p.parent.name in {"oof", "preds"} else p.parent.name
+                    key = f"{owner}:{base_name}" if base_name in discovered["oof_test_pairs"] else base_name
+                    discovered["oof_test_pairs"][key] = (oof_arr.astype(np.float64), test_arr.astype(np.float64))
+                    print(f"Discovered OOF+TEST pair: [{key}]")
+            except Exception:
+                pass
+
+    # 4. Discover .npz Prediction Archives (e.g., joint_token_predictions.npz)
+    for p in sorted(set(npz_files)):
+        if WORK_DIR in p.parents:
+            continue
+        try:
+            data = np.load(p)
+            if "oof" in data and "test" in data:
+                o_arr, t_arr = data["oof"], data["test"]
+                if len(o_arr) == n_train and len(t_arr) == n_test:
+                    key = p.stem
+                    discovered["oof_full_pairs"][key] = (o_arr.astype(np.float64), t_arr.astype(np.float64))
+                    print(f"Discovered NPZ OOF+FULL pair: [{key}]")
+        except Exception:
+            pass
+
+    return discovered
+
+BANKS = discover_all_input_banks()
+print(f"Summary -> Datasets: {list(BANKS['datasets'].keys())} | OOF+FULL pairs: {len(BANKS['oof_full_pairs'])} | OOF+TEST pairs: {len(BANKS['oof_test_pairs'])}")
+## MD: # Cell 4: Load Raw Data, Exact Text Strings & Outer CV Split [Code]
+## CODE:
+# CELL 4: Load Competition Data, Original Dataset, and Exact Text Strings for Floats
+CATS = ["merchant_category", "card_type", "auth_method", "channel", "device_type"]
+FLAGS = [
+    "is_foreign_transaction", "is_new_merchant", "used_vpn",
+    "ip_country_mismatch", "billing_shipping_mismatch", "is_ai_generated_scam_attempt"
+]
+NUMS = [
+    "amount_usd", "hours_since_last_txn", "txn_count_last_24h", "distance_from_home_km",
+    "card_age_months", "customer_age", "account_balance_usd", "cvv_retry_count",
+    "velocity_score", "time_of_day_hour", "day_of_week", "merchant_risk_score", "prior_disputes"
+]
+FEATS = NUMS + FLAGS + CATS
+DEC = {
+    "amount_usd": 2, "account_balance_usd": 2,
+    "hours_since_last_txn": 2, "distance_from_home_km": 2,
+    "velocity_score": 1, "merchant_risk_score": 1
+}
+FLOATS = list(DEC.keys())
+
+train_path = BANKS["datasets"]["train"]
+test_path = BANKS["datasets"]["test"]
+sub_path = BANKS["datasets"]["sample_submission"]
+
+tr = pd.read_csv(train_path)
+te = pd.read_csv(test_path)
+sub_template = pd.read_csv(sub_path)
+
+# Read float columns as raw strings so GPT-2 tokenizer sees exact CSV representation
+tr_txt = pd.read_csv(train_path, dtype=str, usecols=FLOATS)
+te_txt = pd.read_csv(test_path, dtype=str, usecols=FLOATS)
+
+if "orig" in BANKS["datasets"]:
+    og = pd.read_csv(BANKS["datasets"]["orig"]).drop(columns=["transaction_id", "id"], errors="ignore")
+else:
+    og = tr[FEATS + [TARGET]].iloc[:0].copy()
+
+if SMOKE:
+    tr, tr_txt = tr.iloc[:40000].reset_index(drop=True), tr_txt.iloc[:40000].reset_index(drop=True)
+    te, te_txt = te.iloc[:10000].reset_index(drop=True), te_txt.iloc[:10000].reset_index(drop=True)
+    sub_template = sub_template.iloc[:10000].reset_index(drop=True)
+
+BOOL_MAP = {"true": 1, "false": 0, "1": 1, "0": 0, "1.0": 1, "0.0": 0, "yes": 1, "no": 0}
+for d in (tr, te, og):
+    if len(d) > 0:
+        for col in FLAGS:
+            if d[col].dtype == object or str(d[col].dtype) == "string":
+                d[col] = d[col].astype(str).str.strip().str.lower().map(BOOL_MAP).fillna(0).astype("int8")
+            else:
+                d[col] = d[col].astype("int8")
+
+y = tr[TARGET].astype(int).to_numpy()
+NTR = len(tr)
+NTE = len(te)
+
+for c in CATS:
+    cats = sorted(pd.concat([tr[c].astype(str), te[c].astype(str), og[c].astype(str) if len(og) else pd.Series([], dtype=str)]).unique())
+    tr[c] = pd.Categorical(tr[c].astype(str), categories=cats)
+    te[c] = pd.Categorical(te[c].astype(str), categories=cats)
+
+full = pd.concat([tr[FEATS], te[FEATS]], ignore_index=True)
+full_txt = pd.concat([tr_txt[FLOATS], te_txt[FLOATS]], ignore_index=True)
+
+# Master 5-Fold Split (Seed 42) - Identical across all top notebooks
+FOLDS = list(StratifiedKFold(N_FOLDS, shuffle=True, random_state=SEED).split(np.zeros(NTR), y))
+FID = np.zeros(NTR, dtype=int)
+for f_idx, (_, val_idx) in enumerate(FOLDS):
+    FID[val_idx] = f_idx
+
+OOF, FULL = {}, {}
+
+def logit(p: np.ndarray, eps: float = 1e-6) -> np.ndarray:
+    p_clip = np.clip(p, eps, 1.0 - eps)
+    return np.log(p_clip / (1.0 - p_clip))
+
+def rank_norm(v: np.ndarray) -> np.ndarray:
+    return (rankdata(v) - 0.5) / len(v)
+
+print(f"Loaded train: {tr.shape} | test: {te.shape} | orig: {og.shape} | Fraud rate: {y.mean():.4%}")
+## MD: # Cell 5: Unified 96-Key Feature Engineering (24 Exact + 36 Digit-Trie + 36 GPT-2 Tokens)
+## CODE:
+# CELL 5: Build the Unified 96-Key Feature Pool + Raw Decimal & Frequency Features
+t_fe = time.time()
+
+# 1. Load GPT-2 Tokenizer (from local artifact JSON, HuggingFace cache/hub, or deterministic BPE fallback)
+gpt2_tok = None
+try:
+    from tokenizers import Tokenizer
+    if "gpt2-tokenizer.json" in BANKS["json"]:
+        gpt2_tok = Tokenizer.from_file(str(BANKS["json"]["gpt2-tokenizer.json"]))
+        print(f"Loaded GPT-2 tokenizer from local artifact: {BANKS['json']['gpt2-tokenizer.json']}")
+    elif "tokenizer.json" in BANKS["json"]:
+        gpt2_tok = Tokenizer.from_file(str(BANKS["json"]["tokenizer.json"]))
+        print(f"Loaded GPT-2 tokenizer from local artifact: {BANKS['json']['tokenizer.json']}")
+    else:
+        gpt2_tok = Tokenizer.from_pretrained("gpt2")
+        print("Loaded GPT-2 tokenizer from pretrained hub.")
+except Exception as e:
+    print(f"Tokenizer load warning ({e}); using deterministic digit-pair BPE fallback.")
+
+def encode_gpt2_tokens(s: str) -> list[str]:
+    if gpt2_tok is not None:
+        return gpt2_tok.encode(" " + s).tokens
+    # Fallback splits integer & decimal parts into GPT-2-like 2-digit chunks
+    parts = s.split(".")
+    ip = parts[0]
+    head = ["Ġ" + ip[:2]] + [ip[i:i+2] for i in range(2, len(ip), 2)] if len(ip) > 2 else ["Ġ" + ip]
+    if len(parts) > 1:
+        return head + [".", parts[1]]
+    return head
+
+# 2. Construct 36 Base-10 Digit-Trie Keys (6 per float column)
+def build_digit_trie_keys(df_num: pd.DataFrame) -> pd.DataFrame:
+    out = {}
+    for c, k in DEC.items():
+        s = df_num[c].map(lambda v: f"{v:.{k}f}")
+        split_s = s.str.split(".")
+        ip = split_s.str[0]
+        fp = split_s.str[1]
+        L = ip.str.len().astype(str)
+        out[f"int_{c}"] = ip
+        out[f"frac_{c}"] = fp
+        out[f"ten_{c}"] = np.floor(df_num[c] / 10.0).astype("int64").astype(str)
+        out[f"dec_{c}"] = np.floor(df_num[c] * 10.0 + 1e-6).astype("int64").astype(str)
+        out[f"l1_{c}"] = L + "|" + ip.str[:1]
+        out[f"l2_{c}"] = L + "|" + ip.str[:2]
+    return pd.DataFrame(out)
+
+# 3. Construct 36 GPT-2 Subword Token Keys (6 per float column)
+def build_gpt2_token_keys(df_txt: pd.DataFrame) -> pd.DataFrame:
+    out = {}
+    for c in FLOATS:
+        uniq_vals = df_txt[c].unique()
+        pieces_map = {v: encode_gpt2_tokens(str(v)) for v in uniq_vals}
+        t = df_txt[c].map(pieces_map)
+        out[f"{c}__tok0"] = t.str[0]
+        out[f"{c}__tok1"] = t.str[1].fillna("")
+        out[f"{c}__toklast"] = t.str[-1]
+        out[f"{c}__ntok"] = t.str.len().astype(str)
+        out[f"{c}__tok0n"] = t.str[0] + "|" + t.str.len().astype(str)
+        out[f"{c}__intpart"] = t.map(lambda p: "".join(p[:p.index(".")]) if "." in p else "".join(p))
+    return pd.DataFrame(out)
+
+KF_DIGIT = build_digit_trie_keys(full)
+KF_TOKEN = build_gpt2_token_keys(full_txt)
+KF = pd.concat([KF_DIGIT, KF_TOKEN], axis=1)
+
+DIGIT_KEYS = list(KF_DIGIT.columns)
+TOKEN_KEYS = list(KF_TOKEN.columns)
+KEYS = list(KF.columns)
+ENC_COLS = FEATS + KEYS  # 24 raw + 36 digit + 36 token = 96 keys
+
+# 4. Pre-factorize all 96 keys into integer codes over train + test for fast bincount TE
+CODES = np.column_stack(
+    [pd.factorize(full[c].astype(str) if c in CATS else full[c])[0] for c in FEATS] +
+    [pd.factorize(KF[k])[0] for k in KEYS]
+).astype(np.int32)
+NCODE = CODES.max(axis=0) + 1
+
+# 5. Build Numeric Feature Frame for Trees (Raw + Value Counts + Decimal Digits)
+NUM_FRAME = full.copy()
+for c in FLOATS:
+    ref_series = pd.concat([full[c], og[c]]) if len(og) > 0 else full[c]
+    vc = ref_series.value_counts()
+    NUM_FRAME[f"cnt_{c}"] = full[c].map(vc).values.astype(np.float32)
+    scaled_int = np.round(full[c].values * (10 ** DEC[c])).astype(np.int64)
+    NUM_FRAME[f"frac_{c}"] = (scaled_int % (10 ** DEC[c])).astype(np.int16)
+    NUM_FRAME[f"d1_{c}"] = ((scaled_int // (10 ** (DEC[c] - 1))) % 10).astype(np.int8)
+    if DEC[c] == 2:
+        NUM_FRAME[f"d2_{c}"] = (scaled_int % 10).astype(np.int8)
+
+NUM_TR = NUM_FRAME.iloc[:NTR].reset_index(drop=True)
+NUM_TE = NUM_FRAME.iloc[NTR:].reset_index(drop=True)
+
+print(f"Engineered {len(ENC_COLS)} total TE keys ({len(FEATS)} value + {len(DIGIT_KEYS)} digit-trie + {len(TOKEN_KEYS)} GPT-2 token)")
+print(f"Tree numeric frame columns: {NUM_FRAME.shape[1]} | Completed in {time.time() - t_fe:.1f}s")
+## MD: # Cell 6: Ultra-Fast Out-of-Fold & Full-Refit Target Encoding Engine
+## CODE:
+# CELL 6: Vectorized Out-of-Fold & 100% Full-Refit Target Encoding Engine
+TE_NAMES = ["te_" + c for c in ENC_COLS]
+TEST_IDX = np.arange(NTR, NTR + NTE)
+_TE_CACHE = {}
+
+def te_block(rows_fit: np.ndarray, rows_apply: np.ndarray, smooth: float, prior: float) -> np.ndarray:
+    """Computes smoothed target encodings for all 96 keys simultaneously via np.bincount."""
+    out = np.empty((len(rows_apply), len(ENC_COLS)), dtype=np.float32)
+    yf = y[rows_fit]
+    for j in range(len(ENC_COLS)):
+        kf = CODES[rows_fit, j]
+        ka = CODES[rows_apply, j]
+        s = np.bincount(kf, weights=yf, minlength=NCODE[j])
+        n = np.bincount(kf, minlength=NCODE[j])
+        out[:, j] = (s[ka] + prior * smooth) / (n[ka] + smooth)
+    return out
+
+def encode_split(train_idx: np.ndarray, apply_idx: np.ndarray, smooth: float = 20.0, teseed: int = 0):
+    """
+    Cross-fits train_idx using an inner 5-fold split (random_state=teseed) so no row 
+    ever sees its own label, and encodes apply_idx using all labels in train_idx.
+    """
+    prior = float(y[train_idx].mean())
+    inner_oof = np.empty((len(train_idx), len(ENC_COLS)), dtype=np.float32)
+    inner_skf = StratifiedKFold(5, shuffle=True, random_state=teseed)
+    for i_fit, i_val in inner_skf.split(train_idx, y[train_idx]):
+        inner_oof[i_val] = te_block(train_idx[i_fit], train_idx[i_val], smooth, prior)
+    apply_enc = te_block(train_idx, apply_idx, smooth, prior)
+    return inner_oof, apply_enc
+
+def get_encoded(fold_or_full, smooth: float = 20.0, teseed: int = 0):
+    """
+    Returns cached (train_enc, val_enc, test_enc) for fold k in 0..4, 
+    or (full_train_enc, None, full_test_enc) when fold_or_full == 'full'.
+    """
+    key = (fold_or_full, smooth, teseed)
+    if key not in _TE_CACHE:
+        if fold_or_full == "full":
+            tr_idx = np.arange(NTR)
+            ea, eo = encode_split(tr_idx, TEST_IDX, smooth=smooth, teseed=teseed)
+            _TE_CACHE[key] = (ea, None, eo)
+        else:
+            tr_idx, va_idx = FOLDS[fold_or_full]
+            ea, eo = encode_split(tr_idx, np.concatenate([va_idx, TEST_IDX]), smooth=smooth, teseed=teseed)
+            _TE_CACHE[key] = (ea, eo[:len(va_idx)], eo[len(va_idx):])
+    return _TE_CACHE[key]
+
+def clear_te_cache():
+    _TE_CACHE.clear()
+    gc.collect()
+
+print("Target encoding engine ready.")
+## MD: # Cell 7: Unified 96-Key Joint Sparse GLM (5-Fold CV + 100% Full Refit)
+## CODE:
+# CELL 7: Joint Sparse GLM over Standardized Numerics, B-Splines, One-Hot Values, 72 Keys & 96 TE Logits
+if BUDGET.can_run(estimated_minutes=3.5, task_name="glm_unified_96key"):
+    t0 = time.time()
+    num_df = full[NUMS].astype(float).copy()
+    for c in ("amount_usd", "account_balance_usd", "hours_since_last_txn"):
+        num_df[c] = np.log1p(num_df[c].clip(lower=0.0))
+    Z_num = StandardScaler().fit_transform(num_df)
+
+    ONEHOT_BASE = sparse.hstack([
+        sparse.csr_matrix(Z_num),
+        sparse.csr_matrix(full[FLAGS].values.astype(float)),
+        OneHotEncoder(handle_unknown="ignore").fit_transform(full[CATS].astype(str)),
+        sparse.csr_matrix(SplineTransformer(n_knots=8, degree=3, knots="quantile").fit_transform(Z_num)),
+        OneHotEncoder(handle_unknown="ignore", min_frequency=5).fit_transform(full[NUMS]),
+        OneHotEncoder(handle_unknown="ignore", min_frequency=5).fit_transform(KF),
+    ]).tocsr()
+
+    OH_TR = ONEHOT_BASE[:NTR]
+    OH_TE = ONEHOT_BASE[NTR:]
+
+    def build_glm_design(M_list, E_list):
+        sc = StandardScaler().fit(logit(E_list[0], eps=1e-7))
+        return [
+            sparse.hstack([M, sparse.csr_matrix(sc.transform(logit(E, eps=1e-7)))]).tocsr()
+            for M, E in zip(M_list, E_list)
+        ]
+
+    oof_glm = np.zeros(NTR, dtype=np.float64)
+    for f, (a, b) in enumerate(FOLDS):
+        ea, eb, _ = get_encoded(f, smooth=20.0, teseed=0)
+        Da, Db = build_glm_design([OH_TR[a], OH_TR[b]], [ea, eb])
+        clf = LogisticRegression(C=0.01, max_iter=3000 if not SMOKE else 300, tol=1e-6)
+        clf.fit(Da, y[a])
+        oof_glm[b] = clf.predict_proba(Db)[:, 1]
+        print(f"  glm_unified_96key fold {f}: AUC {roc_auc_score(y[b], oof_glm[b]):.5f} ({time.time() - t0:.0f}s)")
+
+    # 100% Full Training Data Refit
+    ea_full, _, et_full = get_encoded("full", smooth=20.0, teseed=0)
+    Da_full, Dt_full = build_glm_design([OH_TR, OH_TE], [ea_full, et_full])
+    clf_full = LogisticRegression(C=0.01, max_iter=3000 if not SMOKE else 300, tol=1e-6)
+    clf_full.fit(Da_full, y)
+    full_glm = clf_full.predict_proba(Dt_full)[:, 1]
+
+    OOF["glm_unified_96key"] = oof_glm
+    FULL["glm_unified_96key"] = full_glm
+    np.save(PREDS_DIR / "glm_unified_96key_oof.npy", oof_glm.astype(np.float32))
+    np.save(PREDS_DIR / "glm_unified_96key_full.npy", full_glm.astype(np.float32))
+    print(f"==> glm_unified_96key ({Da_full.shape[1]} cols): 5-fold CV AUC {roc_auc_score(y, oof_glm):.5f} | Full refit done ({time.time() - t0:.0f}s)\n")
+    del ONEHOT_BASE, OH_TR, OH_TE, Da_full, Dt_full
+    gc.collect()
+## MD: # Cell 8: Shallow Tree Training & 100% Full-Refit Engine (LightGBM & GPU XGBoost)
+## CODE:
+# CELL 8: Tree Runner with 1.25x Iteration Full-Data Refit & Multi-Seed Bagging
+LR = 0.03 if not SMOKE else 0.10
+MAX_TREES = 25000 if not SMOKE else 400
+EARLY_STOP = 300 if not SMOKE else 50
+
+LGB_PARAMS = dict(
+    learning_rate=LR, num_leaves=4, min_child_samples=100,
+    subsample=0.8, subsample_freq=1, colsample_bytree=0.5,
+    reg_lambda=1.0, max_bin=255, n_jobs=N_JOBS, verbose=-1
+)
+
+XGB_PARAMS = dict(
+    learning_rate=LR, max_depth=2, min_child_weight=5,
+    subsample=0.8, colsample_bytree=0.5, reg_lambda=1.0,
+    tree_method="hist", eval_metric="auc", n_jobs=N_JOBS,
+    enable_categorical=True, max_cat_to_onehot=1,
+    **(dict(device="cuda") if GPU_AVAILABLE else {})
+)
+
+def make_tree_frame(rows_idx, enc_matrix, use_te: bool = True) -> pd.DataFrame:
+    base_df = NUM_TR.iloc[rows_idx] if rows_idx is not None else NUM_TE
+    base_df = base_df.reset_index(drop=True)
+    if not use_te:
+        return base_df
+    return pd.concat([base_df, pd.DataFrame(enc_matrix, columns=TE_NAMES)], axis=1)
+
+def fit_single_tree(kind: str, n_est: int, seed: int, Xa, ya, Xb=None, yb=None, **overrides):
+    if kind == "lgb":
+        params = {**LGB_PARAMS, **overrides}
+        model = lgb.LGBMClassifier(**params, n_estimators=n_est, random_state=seed)
+        if Xb is None:
+            model.fit(Xa, ya)
+            return model, n_est
+        model.fit(Xa, ya, eval_set=[(Xb, yb)], eval_metric="auc", callbacks=[lgb.early_stopping(EARLY_STOP, verbose=False)])
+        return model, model.best_iteration_
+    else:
+        params = {**XGB_PARAMS, **overrides}
+        es_kw = {} if Xb is None else dict(early_stopping_rounds=EARLY_STOP)
+        model = xgb.XGBClassifier(**params, n_estimators=n_est, random_state=seed, **es_kw)
+        if Xb is None:
+            model.fit(Xa, ya, verbose=False)
+            return model, n_est
+        model.fit(Xa, ya, eval_set=[(Xb, yb)], verbose=False)
+        return model, model.best_iteration + 1
+
+def run_tree_with_refit(name: str, kind: str, smooth: float = 20.0, seed: int = SEED, teseed: int = 0, use_te: bool = True, **overrides):
+    oof = np.zeros(NTR, dtype=np.float64)
+    best_its = []
+    t0 = time.time()
+    for f, (a, b) in enumerate(FOLDS):
+        ea, eb, _ = get_encoded(f, smooth, teseed) if use_te else (None, None, None)
+        Xa = make_tree_frame(a, ea, use_te)
+        Xb = make_tree_frame(b, eb, use_te)
+        m, it = fit_single_tree(kind, MAX_TREES, seed, Xa, y[a], Xb, y[b], **overrides)
+        oof[b] = m.predict_proba(Xb)[:, 1]
+        best_its.append(it)
+        print(f"  {name} fold {f}: AUC {roc_auc_score(y[b], oof[b]):.5f} | {it} trees ({time.time() - t0:.0f}s)")
+        del Xa, Xb, m
+        gc.collect()
+
+    # 100% Full Training Data Refit (1.25x mean best iteration)
+    n_refit = int(round(np.mean(best_its) * 1.25))
+    ea_full, _, et_full = get_encoded("full", smooth, teseed) if use_te else (None, None, None)
+    X_full = make_tree_frame(np.arange(NTR), ea_full, use_te)
+    X_test = make_tree_frame(None, et_full, use_te)
+    m_full, _ = fit_single_tree(kind, n_refit, seed, X_full, y, **overrides)
+    full_pred = m_full.predict_proba(X_test)[:, 1].astype(np.float64)
+
+    OOF[name] = oof
+    FULL[name] = full_pred
+    print(f"==> {name}: 5-fold CV AUC {roc_auc_score(y, oof):.5f} | Full Refit ({n_refit} trees) done ({time.time() - t0:.0f}s)\n")
+    del X_full, X_test, m_full
+    gc.collect()
+
+def bag_models(bag_name: str, member_names: list[str]):
+    valid_members = [m for m in member_names if m in OOF and m in FULL]
+    if not valid_members:
+        return
+    OOF[bag_name] = np.mean([OOF.pop(m) for m in valid_members], axis=0)
+    FULL[bag_name] = np.mean([FULL.pop(m) for m in valid_members], axis=0)
+    np.save(PREDS_DIR / f"{bag_name}_oof.npy", OOF[bag_name].astype(np.float32))
+    np.save(PREDS_DIR / f"{bag_name}_full.npy", FULL[bag_name].astype(np.float32))
+    print(f"==> BAGGED {bag_name} ({len(valid_members)} seeds): 5-fold CV AUC {roc_auc_score(y, OOF[bag_name]):.5f}\n")
+## MD: # Cell 9: Train Bagged Unified 96-Key Tree Models (LightGBM & GPU XGBoost)
+## CODE:
+# CELL 9: Execute Unified 96-Key Tree Bags + Raw-View Diversity Model
+# 1. Depth-2 XGBoost on GPU (Very fast on T4 GPU, ~1.5m per seed)
+#xgb_seeds = [(42, 0), (137, 1), (2026, 2)] if not SMOKE else [(42, 0)]
+xgb_seeds = [(42, 0), (137, 1), (2026, 2), (777, 3), (99, 4)] if not SMOKE else [(42, 0)]
+xgb_parts = []
+for idx, (s_val, te_s) in enumerate(xgb_seeds):
+    m_name = f"xgb_uni96_s{idx}"
+    if BUDGET.can_run(estimated_minutes=2.0 if GPU_AVAILABLE else 8.0, task_name=m_name):
+        run_tree_with_refit(m_name, "xgb", smooth=20.0, seed=s_val, teseed=te_s)
+        xgb_parts.append(m_name)
+bag_models("xgb_unified_96key_bag", xgb_parts)
+
+# 2. 4-Leaf LightGBM on Unified 96 Keys (Smooth 20, 3 seeds)
+#lgb_seeds = [(42, 0), (137, 1), (2026, 2)] if not SMOKE else [(42, 0)]
+lgb_seeds = [(42, 0), (137, 1), (2026, 2), (777, 3), (99, 4)] if not SMOKE else [(42, 0)]
+lgb_parts = []
+for idx, (s_val, te_s) in enumerate(lgb_seeds):
+    m_name = f"lgb_uni96_s{idx}"
+    if BUDGET.can_run(estimated_minutes=3.5, task_name=m_name):
+        run_tree_with_refit(m_name, "lgb", smooth=20.0, seed=s_val, teseed=te_s)
+        lgb_parts.append(m_name)
+        if te_s > 0:
+            clear_te_cache()
+bag_models("lgb_unified_96key_bag", lgb_parts)
+
+# 3. 4-Leaf LightGBM on Unified 96 Keys (Smooth 100 View, 2 seeds)
+lgb_s100_seeds = [(42, 0), (137, 1)] if not SMOKE else [(42, 0)]
+lgb_s100_parts = []
+for idx, (s_val, te_s) in enumerate(lgb_s100_seeds):
+    m_name = f"lgb_uni96_s100_{idx}"
+    if BUDGET.can_run(estimated_minutes=3.5, task_name=m_name):
+        run_tree_with_refit(m_name, "lgb", smooth=100.0, seed=s_val, teseed=te_s)
+        lgb_s100_parts.append(m_name)
+        clear_te_cache()
+bag_models("lgb_unified_s100_bag", lgb_s100_parts)
+
+# 4. 7-Leaf LightGBM on Unified 96 Keys
+if BUDGET.can_run(estimated_minutes=3.8, task_name="lgb_unified_l7"):
+    run_tree_with_refit("lgb_unified_l7", "lgb", smooth=20.0, seed=SEED, teseed=0, num_leaves=7)
+    np.save(PREDS_DIR / "lgb_unified_l7_oof.npy", OOF["lgb_unified_l7"].astype(np.float32))
+    np.save(PREDS_DIR / "lgb_unified_l7_full.npy", FULL["lgb_unified_l7"].astype(np.float32))
+
+# 5. Raw-View 4-Leaf LightGBM (No Target Encoding - vital for stack diversity)
+if "lgb_rawdig_l4" not in BANKS["oof_full_pairs"] and BUDGET.can_run(estimated_minutes=1.5, task_name="lgb_raw_view"):
+    run_tree_with_refit("lgb_raw_view", "lgb", use_te=False, seed=SEED)
+    np.save(PREDS_DIR / "lgb_raw_view_oof.npy", OOF["lgb_raw_view"].astype(np.float32))
+    np.save(PREDS_DIR / "lgb_raw_view_full.npy", FULL["lgb_raw_view"].astype(np.float32))
+## MD: # Cell 10: GPU RealMLP Neural Network on Unified 96-Key Encodings + Full Refit
+## CODE:
+# CELL 10: GPU RealMLP_TD_Classifier on Raw + 96-Key Encodings (5-Fold CV + 100% Full Refit)
+if GPU_AVAILABLE and BUDGET.can_run(estimated_minutes=9.5, task_name="realmlp_unified_96key"):
+    try:
+        from pytabkit import RealMLP_TD_Classifier
+        t0 = time.time()
+        REALMLP_KW = dict(
+            n_ens=4 if not SMOKE else 2,
+            n_epochs=4 if not SMOKE else 1,
+            batch_size=512,
+            use_early_stopping=False,
+            lr=0.04, wd=0.0236, sq_mom=0.988,
+            lr_sched="lin_cos_log_15", wd_sched="cos_log_15",
+            first_layer_lr_factor=0.25, embedding_size=5,
+            max_one_hot_cat_size=18, hidden_sizes=[512, 256, 128],
+            act="silu", p_drop=0.05, p_drop_sched="expm4t",
+            plr_hidden_1=16, plr_hidden_2=8, plr_act_name="gelu",
+            plr_lr_factor=0.1151, plr_sigma=2.33, ls_eps=0.01,
+            ls_eps_sched="sqrt_cos", add_front_scale=False,
+            bias_init_mode="neg-uniform-dynamic-2",
+            tfms=["one_hot", "median_center", "robust_scale", "smooth_clip", "embedding", "l2_normalize"]
+        )
+
+        oof_mlp = np.zeros(NTR, dtype=np.float64)
+        fold_test_mlp = np.zeros(NTE, dtype=np.float64)
+
+        for f, (a, b) in enumerate(FOLDS):
+            ea, eb, et = get_encoded(f, smooth=20.0, teseed=0)
+            Xa = pd.concat([NUM_TR.iloc[a][FEATS].reset_index(drop=True), pd.DataFrame(ea, columns=TE_NAMES)], axis=1)
+            Xb = pd.concat([NUM_TR.iloc[b][FEATS].reset_index(drop=True), pd.DataFrame(eb, columns=TE_NAMES)], axis=1)
+            XT = pd.concat([NUM_TE[FEATS].reset_index(drop=True), pd.DataFrame(et, columns=TE_NAMES)], axis=1)
+
+            m = RealMLP_TD_Classifier(device="cuda", random_state=SEED + f, val_metric_name="1-auc_ovr", verbosity=0, **REALMLP_KW)
+            m.fit(Xa, y[a], X_val=Xb, y_val=y[b], cat_col_names=CATS)
+            oof_mlp[b] = m.predict_proba(Xb)[:, 1]
+            fold_test_mlp += m.predict_proba(XT)[:, 1] / N_FOLDS
+            print(f"  realmlp_unified_96key fold {f}: AUC {roc_auc_score(y[b], oof_mlp[b]):.5f} ({time.time() - t0:.0f}s)")
+            del Xa, Xb, XT, m
+            gc.collect()
+            torch.cuda.empty_cache()
+
+        # Full-Data Refit on all 700k rows (averaged 50/50 with 5-fold mean for neural stability)
+        ea_full, _, et_full = get_encoded("full", smooth=20.0, teseed=0)
+        Xa_full = pd.concat([NUM_TR[FEATS].reset_index(drop=True), pd.DataFrame(ea_full, columns=TE_NAMES)], axis=1)
+        XT_full = pd.concat([NUM_TE[FEATS].reset_index(drop=True), pd.DataFrame(et_full, columns=TE_NAMES)], axis=1)
+        m_full = RealMLP_TD_Classifier(device="cuda", random_state=SEED, val_fraction=0.0, n_cv=1, verbosity=0, **REALMLP_KW)
+        m_full.fit(Xa_full, y, cat_col_names=CATS)
+        refit_test_mlp = m_full.predict_proba(XT_full)[:, 1]
+
+        OOF["realmlp_unified_96key"] = oof_mlp
+        FULL["realmlp_unified_96key"] = 0.5 * refit_test_mlp + 0.5 * fold_test_mlp
+        np.save(PREDS_DIR / "realmlp_unified_96key_oof.npy", oof_mlp.astype(np.float32))
+        np.save(PREDS_DIR / "realmlp_unified_96key_full.npy", FULL["realmlp_unified_96key"].astype(np.float32))
+        print(f"==> realmlp_unified_96key: 5-fold CV AUC {roc_auc_score(y, oof_mlp):.5f} ({time.time() - t0:.0f}s)\n")
+        del Xa_full, XT_full, m_full
+        clear_te_cache()
+        torch.cuda.empty_cache()
+    except Exception as e:
+        print(f"RealMLP skipped due to runtime exception: {e}")
+## MD: # Cell 11: Pool Pre-Computed Artifact Banks + Self-Trained Models & Reconstruct 0.95159 Anchor
+## CODE:
+# CELL 11: Pool All Discovered OOF+FULL Artifact Banks with Self-Trained Unified Models
+POOL_OOF = {}
+POOL_TEST = {}
+
+# 1. Ingest discovered OOF+FULL pairs (if not in SMOKE mode)
+if not SMOKE:
+    for k, (o_arr, f_arr) in BANKS["oof_full_pairs"].items():
+        POOL_OOF[f"art:{k}"] = o_arr
+        POOL_TEST[f"art:{k}"] = f_arr
+
+    # Also include high-diversity OOF+TEST pairs (e.g., ebm_dig, realmlp_dig) if not already in OOF+FULL
+    for k, (o_arr, t_arr) in BANKS["oof_test_pairs"].items():
+        if f"art:{k}" not in POOL_OOF and k not in BANKS["oof_full_pairs"]:
+            POOL_OOF[f"art:{k}"] = o_arr
+            POOL_TEST[f"art:{k}"] = t_arr
+
+# 2. Ingest Self-Trained Unified 96-Key Models
+for k in OOF:
+    POOL_OOF[f"self:{k}"] = OOF[k]
+    POOL_TEST[f"self:{k}"] = FULL[k]
+
+# 3. Reconstruct Verified 0.95159 Anchor Recipe if Upstream Artifacts Are Attached
+ANCHOR_OOF, ANCHOR_TEST = None, None
+p4_keys = ["lgb_diglead_bag", "lgb_dig_s100_bag", "glm_ohk_c01", "ebm_dig", "lgb_rawdig_l4", "lgb_dig_l7"]
+mega_keys = ["lgb_te20", "xgb_te20", "glm_te20", "lgb_raw"]
+
+if not SMOKE and all(f"art:{k}" in POOL_OOF for k in p4_keys) and all(f"art:{k}" in POOL_OOF for k in mega_keys):
+    w_p4 = np.array([3, 1, 2, 1, 1, 1], dtype=float) / 9.0
+    p4_oof = np.column_stack([rank_norm(POOL_OOF[f"art:{k}"]) for k in p4_keys]) @ w_p4
+    p4_test = np.column_stack([rank_norm(POOL_TEST[f"art:{k}"]) for k in p4_keys]) @ w_p4
+
+    mega_oof = np.mean([rank_norm(POOL_OOF[f"art:{k}"]) for k in mega_keys], axis=0)
+    mega_test = np.mean([rank_norm(POOL_TEST[f"art:{k}"]) for k in mega_keys], axis=0)
+
+    ref_oof = 0.75 * rank_norm(p4_oof) + 0.25 * rank_norm(mega_oof)
+    ref_test = 0.75 * rank_norm(p4_test) + 0.25 * rank_norm(mega_test)
+
+    if "art:joint_token_predictions" in POOL_OOF:
+        ANCHOR_OOF = 0.90 * rank_norm(ref_oof) + 0.10 * rank_norm(POOL_OOF["art:joint_token_predictions"])
+        ANCHOR_TEST = 0.90 * rank_norm(ref_test) + 0.10 * rank_norm(POOL_TEST["art:joint_token_predictions"])
+        print(f"Reconstructed exact 0.95159 LB Anchor -> OOF AUC: {roc_auc_score(y, ANCHOR_OOF):.6f}")
+    else:
+        ANCHOR_OOF, ANCHOR_TEST = ref_oof, ref_test
+        print(f"Reconstructed 0.95149 LB Anchor (Part4 + Mega) -> OOF AUC: {roc_auc_score(y, ANCHOR_OOF):.6f}")
+
+# 4. Quality Filter: Keep strong models & explicitly protect raw-view diversity members
+member_aucs = {k: float(roc_auc_score(y, v)) for k, v in POOL_OOF.items()}
+best_single_auc = max(member_aucs.values())
+# AFTER
+KEEP_NAMES = [
+    k for k, score in member_aucs.items()
+    if score >= (best_single_auc - 0.003) or "raw" in k.lower() or "ebm" in k.lower() or "mlp" in k.lower()
+]
+
+print(f"\nPooled {len(KEEP_NAMES)} active ensemble members (Best Single OOF AUC: {best_single_auc:.5f}):")
+print(pd.Series({k: member_aucs[k] for k in KEEP_NAMES}).sort_values(ascending=False).round(5).to_string())
+## MD: # Cell 12: Nested 5-Fold CV Meta-Ensemble (Hybrid Logit-Stack + Rank Hill-Climbing + Anchor Fusion)
+## CODE:
+# CELL 12: Nested 5-Fold Cross-Validation Meta-Ensemble & Final Submission Generation
+R_oof = np.column_stack([rank_norm(POOL_OOF[k]) for k in KEEP_NAMES])
+R_test = np.column_stack([rank_norm(POOL_TEST[k]) for k in KEEP_NAMES])
+
+# Convert raw probabilities/margins to calibrated probabilities for Logit Stacking
+def to_calibrated_prob(arr: np.ndarray, rank_arr: np.ndarray) -> np.ndarray:
+    if arr.min() >= 0.0 and arr.max() <= 1.0:
+        # Check if it's already a true probability distribution (mean near fraud rate ~0.0167)
+        if 0.005 <= arr.mean() <= 0.10:
+            return np.clip(arr, 1e-6, 1.0 - 1e-6)
+    # Otherwise map ranks smoothly onto empirical base fraud logit distribution
+    base_prior = y.mean()
+    return np.clip(rank_arr, 1e-6, 1.0 - 1e-6)
+
+L_oof = np.column_stack([logit(to_calibrated_prob(POOL_OOF[k], R_oof[:, i])) for i, k in enumerate(KEEP_NAMES)])
+L_test = np.column_stack([logit(to_calibrated_prob(POOL_TEST[k], R_test[:, i])) for i, k in enumerate(KEEP_NAMES)])
+
+def greedy_hill_climb(M_oof: np.ndarray, target: np.ndarray, iters: int = 80) -> np.ndarray:
+    n_models = M_oof.shape[1]
+    w = np.zeros(n_models, dtype=np.float64)
+    best_init = int(np.argmax([roc_auc_score(target, M_oof[:, i]) for i in range(n_models)]))
+    w[best_init] = 1.0
+    cur_pred = M_oof[:, best_init].copy()
+    cur_best = roc_auc_score(target, cur_pred)
+
+    for step in range(1, iters + 1):
+        best_gain_idx = -1
+        best_cand_score = cur_best
+        for i in range(n_models):
+            cand_pred = cur_pred + M_oof[:, i]
+            sc = roc_auc_score(target, cand_pred)
+            if sc > best_cand_score + 1e-7:
+                best_cand_score = sc
+                best_gain_idx = i
+        if best_gain_idx == -1:
+            break
+        w[best_gain_idx] += 1.0
+        cur_pred += M_oof[:, best_gain_idx]
+        cur_best = best_cand_score
+    return w / w.sum()
+
+# Evaluate Meta-Ensemble Candidates Using Nested 5-Fold CV (Seed 7)
+META_FOLDS = list(StratifiedKFold(N_FOLDS, shuffle=True, random_state=7).split(np.zeros(NTR), y))
+candidates_oof = {
+    "1_logit_stack": np.zeros(NTR, dtype=np.float64),
+    "2_rank_hill": np.zeros(NTR, dtype=np.float64),
+    "3_hybrid_mix": np.zeros(NTR, dtype=np.float64),
+}
+if ANCHOR_OOF is not None:
+    candidates_oof["0_anchor_095159"] = ANCHOR_OOF.copy()
+    candidates_oof["4_augmented_anchor_hybrid"] = np.zeros(NTR, dtype=np.float64)
+
+best_alphas = []
+for m_tr, m_va in META_FOLDS:
+    # 1. Standardized Logit L2 Stacker
+    sc = StandardScaler().fit(L_oof[m_tr])
+    lr_meta = LogisticRegression(C=0.005, max_iter=3000).fit(sc.transform(L_oof[m_tr]), y[m_tr])
+    p_stack_va = lr_meta.decision_function(sc.transform(L_oof[m_va]))
+    candidates_oof["1_logit_stack"][m_va] = rank_norm(p_stack_va)
+
+    # 2. Rank Hill-Climbing
+    #w_hc = greedy_hill_climb(R_oof[m_tr], y[m_tr], iters=60 if not SMOKE else 15)
+    # AFTER
+    w_hc = greedy_hill_climb(R_oof[m_tr], y[m_tr], iters=60 if not SMOKE else 15)
+    p_hill_va = R_oof[m_va] @ w_hc
+    candidates_oof["2_rank_hill"][m_va] = rank_norm(p_hill_va)
+
+    # 3. Hybrid Mix (50% Logit Stack + 50% Rank Hill-Climb)
+    candidates_oof["3_hybrid_mix"][m_va] = (
+        0.50 * candidates_oof["1_logit_stack"][m_va] +
+        0.50 * candidates_oof["2_rank_hill"][m_va]
+    )
+
+    # 4. Augmented Anchor + Self-Trained Hybrid Mix (Nested 1D Grid Search)
+    if ANCHOR_OOF is not None:
+        p_stack_tr = rank_norm(lr_meta.decision_function(sc.transform(L_oof[m_tr])))
+        p_hill_tr = rank_norm(R_oof[m_tr] @ w_hc)
+        hyb_tr = rank_norm(0.50 * p_stack_tr + 0.50 * p_hill_tr)
+        anc_tr = rank_norm(ANCHOR_OOF[m_tr])
+
+        #alphas = np.linspace(0.05, 0.50, 19)
+        # AFTER
+        alphas = np.linspace(0.05, 0.25, 11)
+        best_a = max(alphas, key=lambda a: roc_auc_score(y[m_tr], (1.0 - a) * anc_tr + a * hyb_tr))
+        best_alphas.append(best_a)
+        candidates_oof["4_augmented_anchor_hybrid"][m_va] = (
+            (1.0 - best_a) * rank_norm(ANCHOR_OOF[m_va]) +
+            best_a * rank_norm(candidates_oof["3_hybrid_mix"][m_va])
+        )
+
+# Fit Full Meta-Learners on All OOF Rows to Produce Final Test Predictions
+sc_full = StandardScaler().fit(L_oof)
+lr_full = LogisticRegression(C=0.005, max_iter=3000).fit(sc_full.transform(L_oof), y)
+test_logit_stack = rank_norm(lr_full.decision_function(sc_full.transform(L_test)))
+
+#w_hc_full = greedy_hill_climb(R_oof, y, iters=80 if not SMOKE else 15)
+# AFTER
+w_hc_full = greedy_hill_climb(R_oof, y, iters=80 if not SMOKE else 15)
+test_rank_hill = rank_norm(R_test @ w_hc_full)
+test_hybrid_mix = rank_norm(0.50 * test_logit_stack + 0.50 * test_rank_hill)
+
+candidates_test = {
+    "1_logit_stack": expit(lr_full.decision_function(sc_full.transform(L_test))),
+    "2_rank_hill": test_rank_hill,
+    "3_hybrid_mix": test_hybrid_mix,
+}
+if ANCHOR_TEST is not None:
+    mean_alpha = float(np.mean(best_alphas))
+    print(f"Nested-CV Optimal New-Hybrid Blend Weight (alpha): {mean_alpha:.3f}")
+    candidates_test["0_anchor_095159"] = ANCHOR_TEST
+    candidates_test["4_augmented_anchor_hybrid"] = (
+        (1.0 - mean_alpha) * rank_norm(ANCHOR_TEST) +
+        mean_alpha * rank_norm(test_hybrid_mix)
+    )
+
+# Compare All Candidates Fold-by-Fold on Master 5 Folds
+summary_rows = []
+for c_name, c_oof in sorted(candidates_oof.items()):
+    overall_auc = float(roc_auc_score(y, c_oof))
+    fold_aucs = [float(roc_auc_score(y[va], c_oof[va])) for _, va in FOLDS]
+    summary_rows.append({
+        "Candidate": c_name,
+        "Nested_OOF_AUC": overall_auc,
+        **{f"Fold_{i}": fold_aucs[i] for i in range(N_FOLDS)}
+    })
+
+summary_df = pd.DataFrame(summary_rows).sort_values("Nested_OOF_AUC", ascending=False)
+print("\n=== META-ENSEMBLE NESTED CV COMPARISON ===")
+print(summary_df.to_string(index=False, float_format=lambda x: f"{x:.6f}"))
+
+print("\n=== HILL-CLIMBING MEMBER WEIGHTS ===")
+hc_series = pd.Series(w_hc_full, index=KEEP_NAMES)
+print(hc_series[hc_series > 0].sort_values(ascending=False).round(4).to_string())
+
+# Select Best Candidate
+best_cand_name = summary_df.iloc[0]["Candidate"]
+winning_test_preds = candidates_test[best_cand_name]
+
+sub = pd.DataFrame({"id": te["id"], TARGET: winning_test_preds})
+assert len(sub) == NTE, f"Expected {NTE} rows, got {len(sub)}"
+assert sub["id"].equals(sub_template["id"]), "Submission ID alignment mismatch!"
+assert np.isfinite(sub[TARGET]).all() and sub[TARGET].between(0.0, 1.0).all(), "Invalid probability values!"
+
+sub.to_csv(WORK_DIR / "submission.csv", index=False)
+print(f"\nSaved winning candidate [{best_cand_name}] to /kaggle/working/submission.csv | Total Runtime: {BUDGET.elapsed_minutes():.1f} min")
+sub.head(10)

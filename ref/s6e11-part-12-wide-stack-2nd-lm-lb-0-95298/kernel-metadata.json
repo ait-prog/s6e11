@@ -1,0 +1,35 @@
+{
+  "id": "goodpjw2008/s6e11-part-12-wide-stack-2nd-lm-lb-0-95298",
+  "id_no": 142035291,
+  "title": "S6E11 Part 12 | Wide Stack + 2nd LM | LB 0.95298",
+  "code_file": "s6e11-part-12-wide-stack-2nd-lm-lb-0-95298.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [],
+  "dataset_sources": [
+    "uditjain13/credit-card-fraud-detection-2026",
+    "goodpjw2008/s6e11-fraud-series-artifacts",
+    "malyshevdanil/s6e11-pooled-stack-v9",
+    "megayak/s6e11-target-first-lm"
+  ],
+  "kernel_sources": [
+    "yekenot/ps-s6-e11-realmlp-pytabkit",
+    "lazyyeou/s6e11-digit-trie-te-joint-glm-nested-stack",
+    "nilanjansaha123/96-key-digit-trie-gpt-2-full-refit-hybrid",
+    "masayakawamata/s6e11-gpt-2-target-first-classifier-cv-0-9500",
+    "amanatar/s6e11-sovereign-fusion-solution",
+    "yekenot/ps-s6-e11-realmlp-pytorch",
+    "alexchilton/credit-card-fraud-lb-0-9524-shallow-tree-stack",
+    "megayak/s6e11-per-value-digit-te-shallow-tree-stack"
+  ],
+  "competition_sources": [
+    "playground-series-s6e11"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:17b2fc7f27c25c6c2fd4230ec8e66097ab2b89fc88e1e4d6f338b72e1ee0bc3e",
+  "machine_shape": "None"
+}

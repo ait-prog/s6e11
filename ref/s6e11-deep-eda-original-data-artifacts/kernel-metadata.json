@@ -1,0 +1,23 @@
+{
+  "id": "evgendvorkin/s6e11-deep-eda-original-data-artifacts",
+  "id_no": 142019406,
+  "title": "S6E11 | Deep EDA: Original Data & Artifacts",
+  "code_file": "s6e11-deep-eda-original-data-artifacts.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [],
+  "dataset_sources": [
+    "uditjain13/credit-card-fraud-detection-2026"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [
+    "playground-series-s6e11"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:17b2fc7f27c25c6c2fd4230ec8e66097ab2b89fc88e1e4d6f338b72e1ee0bc3e",
+  "machine_shape": "None"
+}

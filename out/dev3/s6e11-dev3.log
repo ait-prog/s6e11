@@ -1,0 +1,25 @@
+[{"stream_name":"stdout","time":19.737139018,"data":"20:43:38 ntok 86 d256 L6 h8 p0.1 ep6 bs512 lr0.001 K4 seed0\n"}
+,{"stream_name":"stdout","time":19.74941654,"data":"20:43:38 ntok 86 d384 L8 h8 p0.1 ep6 bs512 lr0.0007 K4 seed0\n"}
+,{"stream_name":"stdout","time":19.809865003,"data":"20:43:38 fold 0 params 4.80M train 559968\n"}
+,{"stream_name":"stdout","time":19.862693924,"data":"20:43:38 fold 0 params 14.29M train 559968\n"}
+,{"stream_name":"stdout","time":226.411049182,"data":"20:47:05 ep 1/6 loss 1.1496 3.1m val 0.93670\n"}
+,{"stream_name":"stdout","time":427.833118871,"data":"20:50:26 ep 2/6 loss 0.9696 6.4m val 0.93996\n"}
+,{"stream_name":"stdout","time":481.886235068,"data":"20:51:20 ep 1/6 loss 1.1242 6.9m val 0.93490\n"}
+,{"stream_name":"stdout","time":629.849193638,"data":"20:53:48 ep 3/6 loss 0.9447 9.8m val 0.93991\n"}
+,{"stream_name":"stdout","time":831.938333182,"data":"20:57:10 ep 4/6 loss 0.9356 13.2m val 0.94182\n"}
+,{"stream_name":"stdout","time":942.020353698,"data":"20:59:01 ep 2/6 loss 0.9610 14.6m val 0.93945\n"}
+,{"stream_name":"stdout","time":1033.887733585,"data":"21:00:32 ep 5/6 loss 0.9311 16.5m val 0.94195\n"}
+,{"stream_name":"stdout","time":1235.950398894,"data":"21:03:54 ep 6/6 loss 0.9290 19.9m val 0.94259\n"}
+,{"stream_name":"stdout","time":1271.47734675,"data":"21:04:30 fold 0 AUC 0.94331 one-order 0.94206\n"}
+,{"stream_name":"stdout","time":1403.373266604,"data":"21:06:42 ep 3/6 loss 0.9382 22.3m val 0.94038\n"}
+,{"stream_name":"stdout","time":1868.640593824,"data":"21:14:27 ep 4/6 loss 0.9308 30.1m val 0.94246\n"}
+,{"stream_name":"stdout","time":2334.647732781,"data":"21:22:13 ep 5/6 loss 0.9269 37.8m val 0.94327\n"}
+,{"stream_name":"stdout","time":2801.241802214,"data":"21:30:00 ep 6/6 loss 0.9250 45.6m val 0.94416\n"}
+,{"stream_name":"stdout","time":2882.289370433,"data":"21:31:21 fold 0 AUC 0.94442 one-order 0.94367\n"}
+,{"stream_name":"stderr","time":2886.075968783,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":2886.076005757,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":2886.327404165,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":2886.327430888,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":2887.168309466,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":2888.110526582,"data":"[NbConvertApp] Writing 352573 bytes to __results__.html\n"}
+]

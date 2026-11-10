@@ -1,0 +1,23 @@
+{
+  "id": "masayakawamata/s6e11-gpt-2-target-first-classifier-cv-0-9500",
+  "id_no": 142521812,
+  "title": "S6E11 | GPT-2 Target-First Classifier | CV 0.9500",
+  "code_file": "s6e11-gpt-2-target-first-classifier-cv-0-9500.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [],
+  "dataset_sources": [
+    "masayakawamata/s6e11-gpt2-target-first-oof"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [
+    "playground-series-s6e11"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:0717e81990be591f8c5f98f033d29ab23e9ffde057e5b3a6bd4371f93969e962",
+  "machine_shape": "None"
+}

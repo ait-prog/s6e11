@@ -1,0 +1,24 @@
+{
+  "id": "megayak/s6e11-per-value-digit-te-shallow-tree-stack",
+  "id_no": 142201267,
+  "title": "S6E11 | Per-Value + Digit TE | Shallow-Tree Stack",
+  "code_file": "s6e11-per-value-digit-te-shallow-tree-stack.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [],
+  "dataset_sources": [
+    "uditjain13/credit-card-fraud-detection-2026",
+    "megayak/s6e11-target-first-lm"
+  ],
+  "kernel_sources": [],
+  "competition_sources": [
+    "playground-series-s6e11"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:17b2fc7f27c25c6c2fd4230ec8e66097ab2b89fc88e1e4d6f338b72e1ee0bc3e",
+  "machine_shape": "None"
+}

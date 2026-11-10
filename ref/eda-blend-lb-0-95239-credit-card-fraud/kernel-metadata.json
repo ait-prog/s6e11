@@ -1,0 +1,30 @@
+{
+  "id": "saamhm/eda-blend-lb-0-95239-credit-card-fraud",
+  "id_no": 142222534,
+  "title": "EDA | blend | LB-0.95239 | Credit Card Fraud",
+  "code_file": "eda-blend-lb-0-95239-credit-card-fraud.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": true,
+  "enable_tpu": false,
+  "enable_internet": true,
+  "keywords": [
+    "feature engineering",
+    "tabular",
+    "classification",
+    "gpu"
+  ],
+  "dataset_sources": [],
+  "kernel_sources": [
+    "areebbb/s6e11-wide-stack-shallow-tree-fusion-0-95291",
+    "malyshevdanil/fraud-signal-lab-gpt-2-and-glm-fusion",
+    "saamhm/eda-blend-lb-0-95239-credit-card-fraud"
+  ],
+  "competition_sources": [
+    "playground-series-s6e11"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-private-byod/python@sha256:9a6bcfda6d03b2cd9aa347ee8c1bae62043328ed0f4afe9bda014e4f8bbf9435",
+  "machine_shape": "NvidiaTeslaT4"
+}

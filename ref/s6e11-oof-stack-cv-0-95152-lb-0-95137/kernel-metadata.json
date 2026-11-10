@@ -1,0 +1,31 @@
+{
+  "id": "masayakawamata/s6e11-oof-stack-cv-0-95152-lb-0-95137",
+  "id_no": 142391153,
+  "title": "S6E11 | OOF Stack | CV 0.95152 | LB 0.95137",
+  "code_file": "s6e11-oof-stack-cv-0-95152-lb-0-95137.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": false,
+  "enable_gpu": false,
+  "enable_tpu": false,
+  "enable_internet": false,
+  "keywords": [],
+  "dataset_sources": [
+    "masayakawamata/s6e11-tabpack-cpu-starter-predictions",
+    "wguesdon/s6e11-tree-ensemble-predictions"
+  ],
+  "kernel_sources": [
+    "yekenot/ps-s6-e11-realmlp-pytabkit",
+    "sameershaikh27/s6e11-fraud-seed-and-fold-averaging-measured",
+    "masayakawamata/s6e11-single-xgb-te-features-cv-0-9504",
+    "masayakawamata/s6e11-single-logreg-te-features-cv-0-9502",
+    "staesthetics/lgb-model-te-lb-0-94691",
+    "masayakawamata/s6e11-gpt-2-target-first-classifier-cv-0-9500"
+  ],
+  "competition_sources": [
+    "playground-series-s6e11"
+  ],
+  "model_sources": [],
+  "docker_image": "gcr.io/kaggle-images/python@sha256:0717e81990be591f8c5f98f033d29ab23e9ffde057e5b3a6bd4371f93969e962",
+  "machine_shape": "None"
+}

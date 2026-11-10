@@ -1,0 +1,26 @@
+[{"stream_name":"stdout","time":26.309840225,"data":"21:36:22 tok l3 ntok 1059 d384 L8 h8 p0.1 ep6 bs512 lr0.0007 K4 seed0\n"}
+,{"stream_name":"stdout","time":26.496201271,"data":"21:36:22 fold 0 params 15.04M train 559968\n"}
+,{"stream_name":"stderr","time":36.748362567,"data":"Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.\n"}
+,{"stream_name":"stdout","time":44.505653089,"data":"21:36:40 tok bpe ntok 981 d384 L8 h8 p0.1 ep6 bs512 lr0.0007 K4 seed0\n"}
+,{"stream_name":"stdout","time":44.641514172,"data":"21:36:40 fold 0 params 14.98M train 559968\n"}
+,{"stream_name":"stdout","time":384.970402941,"data":"21:42:20 ep 1/6 loss 1.3740 5.4m val 0.93781\n"}
+,{"stream_name":"stdout","time":423.081539968,"data":"21:42:58 ep 1/6 loss 1.3680 5.7m val 0.93935\n"}
+,{"stream_name":"stdout","time":738.694566498,"data":"21:48:14 ep 2/6 loss 1.1300 11.3m val 0.94194\n"}
+,{"stream_name":"stdout","time":819.359735809,"data":"21:49:35 ep 2/6 loss 1.1210 12.3m val 0.94359\n"}
+,{"stream_name":"stdout","time":1092.323665757,"data":"21:54:08 ep 3/6 loss 1.1184 17.2m val 0.94351\n"}
+,{"stream_name":"stdout","time":1216.061204239,"data":"21:56:11 ep 3/6 loss 1.1102 18.9m val 0.94453\n"}
+,{"stream_name":"stdout","time":1446.530048154,"data":"22:00:02 ep 4/6 loss 1.1132 23.1m val 0.94512\n"}
+,{"stream_name":"stdout","time":1613.439604886,"data":"22:02:49 ep 4/6 loss 1.1051 25.5m val 0.94601\n"}
+,{"stream_name":"stdout","time":1801.346241787,"data":"22:05:57 ep 5/6 loss 1.1098 29.0m val 0.94543\n"}
+,{"stream_name":"stdout","time":2012.180626233,"data":"22:09:28 ep 5/6 loss 1.1018 32.2m val 0.94664\n"}
+,{"stream_name":"stdout","time":2156.44015162,"data":"22:11:52 ep 6/6 loss 1.1080 34.9m val 0.94583\n"}
+,{"stream_name":"stdout","time":2216.820382718,"data":"22:12:52 fold 0 AUC 0.94607 one-order 0.94527\n"}
+,{"stream_name":"stdout","time":2410.355480982,"data":"22:16:06 ep 6/6 loss 1.0999 38.8m val 0.94721\n"}
+,{"stream_name":"stdout","time":2479.293517049,"data":"22:17:15 fold 0 AUC 0.94698 one-order 0.94639\n"}
+,{"stream_name":"stderr","time":2483.851752514,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":2483.851787556,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":2484.156440636,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":2484.156467768,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":2485.125758693,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":2486.346385534,"data":"[NbConvertApp] Writing 355546 bytes to __results__.html\n"}
+]

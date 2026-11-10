@@ -1,0 +1,197 @@
+## MD: # S6E11 Fraud: Wide Pooled Stack, Every Bank Found Seventeenth notebook in the series. The [first pooled stack](https://www.kaggle.com/code/sameershaikh27/s6e11-fraud-pooled-stack-of-public-oof-banks) saturated at nested CV 0.9519 with 116 members from thirteen sources. A search of Kaggle's datasets turned up banks it never saw, two of which are exactly what the strongest file on this account uses: **sadamtorres'** TabPFN and GBDT out-of-fold pairs and **queyrusi's** shared digit CNN. This notebook pools everything found, with my own members that no other bank has, and scores the combiner by nested CV. | source | what it publishes | |---|---| | **sadamtorres**, [TabPFN + GBDT OOF/test pairs](https://www.kaggle.com/datasets/sadamtorres/ps-s6e11-tabpfn-gbdt-oof-test-pairs) | 14 members as `pair_oof_*` / `pair_test_*` csv, TabPFN among them | | **queyrusi**, [shared digit CNN artifacts](https://www.kaggle.com/datasets/queyrusi/fraud-shared-digit-cnn-weights) | predictions of a CNN over the written digits, three seeds | | **goodpjw2008**, [OOF bank](https://www.kaggle.com/datasets/goodpjw2008/s6e11-oof-bank) and [series artifacts](https://www.kaggle.com/datasets/goodpjw2008/s6e11-fraud-series-artifacts) | 60-plus members with a manifest; EBMs, GLM boosts, bags | | **wguesdon**, [tree ensemble predictions](https://www.kaggle.com/datasets/wguesdon/s6e11-tree-ensemble-predictions) | seven base models as npz | | **masayakawamata**, [GPT-2 target-first OOF](https://www.kaggle.com/datasets/masayakawamata/s6e11-gpt2-target-first-oof), [public stack v10 outputs](https://www.kaggle.com/datasets/masayakawamata/s6e11-public-stack-v10-outputs) and [TabPack CPU starter predictions](https://www.kaggle.com/datasets/masayakawamata/s6e11-tabpack-cpu-starter-predictions) | one member each; the GPT-2 member took the largest stack coefficient in version 2 | | **alexchilton**, [OOF predictions](https://www.kaggle.com/datasets/alexchilton/s6e11-oof-predictions) · **malyshevdanil**, [pooled stack v9](https://www.kaggle.com/datasets/malyshevdanil/s6e11-pooled-stack-v9) | as before | | notebooks: nilanjansaha123, lazyyeou, megayak, yekenot | as before | | version 5: **masayakawamata** [saved study records](https://www.kaggle.com/datasets/masayakawamata/s6e11-saved-study-records) · **megayak** [target-first LM](https://www.kaggle.com/datasets/megayak/s6e11-target-first-lm) · notebooks of sidhaarthshree, mdmuqtadirfuad, maverickss26, nirmalpatel02, denpugovkin, dhananjayk2609 | logistic and distilled members; a compact GPT-2 LM; self-trained digit-key banks; an FT-Transformer; a GLM-boost; a seed study; a digit-CNN bag and a second GPT-2 | | mine | notebooks 3, 4, 8, 11, 13, 14, 16 | Every member must be an out-of-fold prediction on `StratifiedKFold(5, shuffle=True, random_state=42)` or the stacker cannot be scored honestly; members whose fold ids are published are checked against that split. Thank you to every author above; upvote their work first.
+## MD: ## 1. Load every bank under /kaggle/input
+## CODE:
+import os, glob, json, re, warnings
+import numpy as np, pandas as pd
+from scipy.stats import rankdata
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import roc_auc_score
+from sklearn.model_selection import StratifiedKFold
+warnings.filterwarnings("ignore")
+SEED, TARGET = 42, "is_fraud"
+def find(name, hint=""):
+    hits = sorted(glob.glob(os.path.join("/kaggle/input", "**", name), recursive=True))
+    hits = [h for h in hits if hint in h] or hits; assert hits, name; return hits[0]
+train = pd.read_csv(find("train.csv", "s6e11")); test = pd.read_csv(find("test.csv", "s6e11"))
+y = train[TARGET].astype(int).values; NTR, NTE = len(train), len(test)
+FOLDS = list(StratifiedKFold(5, shuffle=True, random_state=SEED).split(np.zeros(NTR), y))
+fold_id = np.zeros(NTR, int)
+for f, (_, b) in enumerate(FOLDS): fold_id[b] = f
+
+OOF, TEST, HASREFIT, SRC = {}, {}, {}, {}
+def source_tag(path):
+    parts = path.split("/kaggle/input/")[-1].split("/")
+    return parts[1] if parts[0] in ("datasets", "notebooks", "competitions") and len(parts) > 2 else parts[0]
+def add(name, oof, tst, refit, src):
+    oof = np.asarray(oof, dtype=np.float64).ravel(); tst = np.asarray(tst, dtype=np.float64).ravel()
+    if len(oof) != NTR or len(tst) != NTE or not np.isfinite(oof).all() or not np.isfinite(tst).all(): return
+    key = f"{src}:{name}"
+    if key in OOF: return
+    OOF[key], TEST[key], HASREFIT[key], SRC[key] = oof, tst, refit, src
+def col(df):
+    return df["is_fraud"].values if "is_fraud" in df else df.iloc[:, -1].values
+
+# A. npy pairs: <n>_oof.npy + <n>_full|_test.npy ; oof_<n>.npy + refit_|full_|test_<n>.npy
+for p in glob.glob("/kaggle/input/**/*.npy", recursive=True):
+    d, f = os.path.split(p); src = source_tag(p)
+    try:
+        if f.endswith("_oof.npy"):
+            n = f[:-8]
+            for suf, refit in (("_full.npy", True), ("_test.npy", False)):
+                q = os.path.join(d, n + suf)
+                if os.path.exists(q): add(n, np.load(p), np.load(q), refit, src); break
+        elif f.startswith("oof_"):
+            n = f[4:-4]
+            for pre, refit in (("refit_", True), ("full_", True), ("testfull_", True), ("test_", False)):
+                q = os.path.join(d, pre + n + ".npy")
+                if os.path.exists(q): add(n, np.load(p), np.load(q), refit, src); break
+        elif f == "oof.npy":
+            for tn, refit in (("full.npy", True), ("test.npy", False)):
+                q = os.path.join(d, tn)
+                if os.path.exists(q): add(os.path.basename(d), np.load(p), np.load(q), refit, src); break
+    except Exception as e: print("npy skipped:", f, e)
+# B. csv pairs: pair_oof_<n>.csv + pair_test_<n>.csv ; oof_preds.csv + submission.csv ; my oof.csv + test_preds.csv
+for p in glob.glob("/kaggle/input/**/pair_oof_*.csv", recursive=True):
+    d, f = os.path.split(p); n = f[len("pair_oof_"):-4]; q = os.path.join(d, f"pair_test_{n}.csv")
+    if os.path.exists(q):
+        try: add(n, col(pd.read_csv(p)), col(pd.read_csv(q)), False, source_tag(p))
+        except Exception as e: print("pair skipped:", f, e)
+for op in glob.glob("/kaggle/input/**/oof_preds.csv", recursive=True):
+    sp = os.path.join(os.path.dirname(op), "submission.csv")
+    if os.path.exists(sp):
+        try: add("realmlp", col(pd.read_csv(op)), col(pd.read_csv(sp)), False, source_tag(op))
+        except Exception as e: print("csv pair skipped:", op, e)
+for op in glob.glob("/kaggle/input/**/oof.csv", recursive=True):
+    tp = os.path.join(os.path.dirname(op), "test_preds.csv")
+    if not os.path.exists(tp): continue
+    try:
+        o = pd.read_csv(op); t = pd.read_csv(tp); src = source_tag(op)
+        if len(o) != NTR or len(t) != NTE: continue
+        for c in o.columns:
+            if c in ("id", TARGET, "blend", "final_blend"): continue
+            if c + "_full" in t: add(c, o[c].values, t[c + "_full"].values, True, src)
+            elif c in t: add(c, o[c].values, t[c].values, False, src)
+            elif c == "bag" and "bag_full" in t: add(c, o[c].values, t["bag_full"].values, True, src)
+    except Exception as e: print("oof.csv skipped:", op, e)
+# B2. oof_<n>.npy whose test side is only a submission csv (nirmalpatel02: submission_<n>_refit.csv, rank-scaled); add() ignores keys already loaded
+for p in glob.glob("/kaggle/input/**/oof_*.npy", recursive=True):
+    d, f = os.path.split(p); n = f[4:-4]
+    for suf, refit in (("_refit.csv", True), ("_foldavg.csv", False), (".csv", False)):
+        q = os.path.join(d, "submission_" + n + suf)
+        if os.path.exists(q):
+            try: add(n, np.load(p), col(pd.read_csv(q)), refit, source_tag(p))
+            except Exception as e: print("npy+csv skipped:", f, e)
+            break
+# C. npz bundles: any array of length NTR paired with one of length NTE; matrices paired column-wise; manifest names if present
+for p in glob.glob("/kaggle/input/**/*.npz", recursive=True):
+    try:
+        z = np.load(p, allow_pickle=False); src = source_tag(p); base = os.path.basename(p)[:-4]
+        keys = list(z.keys()); names = None
+        for mp in glob.glob(os.path.join(os.path.dirname(p), "*manifest*.json")):
+            try:
+                man = json.load(open(mp)); names = man.get("names") if isinstance(man, dict) else None
+                if names: break
+            except Exception: pass
+        # float arrays only: int fold-id / row-index arrays of train length (dhananjayk2609 own_cnn "folds", queyrusi "ids_train") are not members
+        oofk = [k for k in keys if z[k].ndim >= 1 and z[k].shape[0] == NTR and z[k].dtype.kind == "f"]
+        tstk = [k for k in keys if z[k].ndim >= 1 and z[k].shape[0] == NTE and z[k].dtype.kind == "f"]
+        for ok in oofk:
+            O = z[ok]
+            # choose the test key: same suffix after replacing oof->test/full, else the only test-length key
+            cand = [k for k in tstk if k.replace("test", "oof").replace("full", "oof").replace("refit", "oof") == ok] or ([tstk[0]] if len(tstk) == 1 else [])
+            if not cand: continue
+            T = z[cand[0]]; refit = ("full" in cand[0] or "refit" in cand[0])
+            if O.ndim == 1: add(f"{base}_{ok}" if len(oofk) > 1 else base, O, T, refit, src)
+            elif O.ndim == 2 and T.ndim == 2 and O.shape[1] == T.shape[1]:
+                for j in range(O.shape[1]):
+                    add(names[j] if names and j < len(names) else f"{base}_{ok}_{j}", O[:, j], T[:, j], refit, src)
+    except Exception as e: print("npz skipped:", os.path.basename(p), e)
+# D. parquet pairs: oof.parquet (id, fold, prediction_<m>, ...) + test_preds.parquet (id, prediction_<m>, ...) (denpugovkin); fold column checked against this split
+for op in glob.glob("/kaggle/input/**/oof.parquet", recursive=True):
+    tp = os.path.join(os.path.dirname(op), "test_preds.parquet")
+    if not os.path.exists(tp): continue
+    try:
+        o = pd.read_parquet(op); t = pd.read_parquet(tp); src = source_tag(op)
+        if len(o) != NTR or len(t) != NTE: continue
+        if "id" in o: o = o.sort_values("id")
+        if "id" in t: t = t.sort_values("id")
+        if "fold" in o and not all(len(set(o["fold"].values[fold_id == f])) == 1 for f in range(5)): print("parquet DIFFERENT split, skipped:", src); continue
+        for c in [c for c in o.columns if c.startswith("prediction_") and c in t]: add(c[len("prediction_"):], o[c].values, t[c].values, False, src)
+    except Exception as e: print("parquet skipped:", op, e)
+print(f"{len(OOF)} members loaded from {len(set(SRC.values()))} sources")
+## MD: ## 2. Fold check, score, filter, dedupe Where a bank publishes its fold ids, they are compared with this series' split; a member on a different split would make the nested CV lie, and is dropped. Then members more than 0.004 below the best are dropped, and exact duplicates removed.
+## CODE:
+# fold-id check for banks that publish them
+bad_src = set()
+for fp in glob.glob("/kaggle/input/**/fold_ids.npy", recursive=True) + glob.glob("/kaggle/input/**/folds.csv", recursive=True):
+    try:
+        ids = np.load(fp) if fp.endswith(".npy") else pd.read_csv(fp).iloc[:, -1].values
+        if len(ids) == NTR:
+            agree = np.mean(ids.astype(int) == fold_id)
+            # fold numbering may be permuted: accept if the partition matches (same rows grouped)
+            same = all(len(set(ids[fold_id == f])) == 1 for f in range(5))
+            print(f"{source_tag(fp):45s} fold ids: {'same partition' if same else 'DIFFERENT split'} (exact match {agree:.0%})")
+            if not same: bad_src.add(source_tag(fp))
+    except Exception as e: print("fold check skipped:", fp, e)
+for k in [k for k in OOF if SRC[k] in bad_src]: OOF.pop(k); TEST.pop(k); HASREFIT.pop(k); SRC.pop(k)
+auc = pd.Series({k: roc_auc_score(y, v) for k, v in OOF.items()}).sort_values(ascending=False)
+best = auc.max()
+# version 3: the 0.004 gate is itself a hyperparameter. It excluded the TabPFN pairs, the digit CNN and TabPack, the members
+# whose errors differ most from the trees. Three gates are scored by nested CV below; dedupe is done once on the widest.
+GATES = [0.004, 0.008, 0.015]
+wide = auc[auc >= best - max(GATES)].index.tolist()
+R = {k: rankdata(OOF[k])/NTR for k in wide}; dedup = []
+for k in wide:
+    if all(np.corrcoef(R[k], R[j])[0, 1] < 0.99995 for j in dedup): dedup.append(k)
+MEMBERS_BY = {g: [k for k in dedup if auc[k] >= best - g] for g in GATES}
+for g in GATES: print(f"gate {g}: {len(MEMBERS_BY[g])} members after dedupe")
+tab = pd.DataFrame({"OOF AUC": auc[dedup], "refit": [HASREFIT[k] for k in dedup], "source": [SRC[k] for k in dedup]})
+print(tab.round(5).head(30).to_string()); print(); print(tab.groupby("source").size().sort_values(ascending=False).to_string())
+print(); print("members admitted only by the wider gates:"); print(tab[auc[dedup] < best - 0.004].round(5).to_string())
+## MD: ## 3. Combiners by nested CV
+## CODE:
+def logit(p): p = np.clip(p, 1e-6, 1-1e-6); return np.log(p/(1-p))
+ALL = MEMBERS_BY[max(GATES)]; IDX = {k: i for i, k in enumerate(ALL)}
+Lo_all = logit(np.column_stack([R[k] for k in ALL])); Lt_all = logit(np.column_stack([rankdata(TEST[k])/NTE for k in ALL]))
+def cols(ms): return [IDX[k] for k in ms]
+def stack_fit(Lm, yy, C=0.01): return LogisticRegression(C=C, max_iter=5000, tol=1e-7).fit(Lm, yy)
+# step 1: the gate, at C = 0.01 (the winner of version 2)
+nested = {}
+for g in GATES:
+    ci = cols(MEMBERS_BY[g]); v = np.zeros(NTR)
+    for a, b in FOLDS: v[b] = stack_fit(Lo_all[a][:, ci], y[a], C=0.01).decision_function(Lo_all[b][:, ci])
+    nested[f"gate{g}_c0.01"] = v; print(f"gate {g} ({len(ci)} members) nested CV {roc_auc_score(y, v):.5f}")
+best_g = max(GATES, key=lambda g: roc_auc_score(y, nested[f"gate{g}_c0.01"])); MEMBERS = MEMBERS_BY[best_g]; CI = cols(MEMBERS)
+Lo = Lo_all[:, CI]; Lt = Lt_all[:, CI]
+# step 2: a finer C grid at the winning gate, and the rank average over the grid, which bags the stacker's own variance
+CS = [0.005, 0.007, 0.01, 0.014, 0.02]
+for c in CS:
+    if c == 0.01: nested["stack_c0.01"] = nested[f"gate{best_g}_c0.01"]; continue
+    v = np.zeros(NTR)
+    for a, b in FOLDS: v[b] = stack_fit(Lo[a], y[a], C=c).decision_function(Lo[b])
+    nested[f"stack_c{c}"] = v
+nested["cavg"] = sum(rankdata(nested[f"stack_c{c}"]) for c in CS)/NTR
+for f, (a, b) in enumerate(FOLDS): print(f"fold {f}: " + "  ".join(f"{k} {roc_auc_score(y[b], v[b]):.5f}" for k, v in nested.items() if not k.startswith("gate")))
+best_c = max(CS, key=lambda c: roc_auc_score(y, nested[f"stack_c{c}"]))
+scores = pd.Series({k: roc_auc_score(y, v) for k, v in nested.items()}).sort_values(ascending=False)
+print(); print("nested CV AUC:"); print(scores.round(5).to_string())
+print(); print(f"best gate {best_g} | best C {best_c} | best single member {auc[MEMBERS].max():.5f} | version 2: 0.95241 | first pooled stack: 0.95188")
+WINNER = [k for k in scores.index if not k.startswith("gate")][0]
+## MD: ## 4. Final fit and submissions
+## CODE:
+import gc
+del Lo_all, Lt_all, OOF, TEST, R; gc.collect()
+Lo = np.ascontiguousarray(Lo, dtype=np.float32); Lt = np.ascontiguousarray(Lt, dtype=np.float32)
+final = {}; m = None
+for c in CS:
+    mc = stack_fit(Lo, y, C=c); final[f"stack_c{c}"] = mc.decision_function(Lt)
+    if c == best_c: m = mc
+    del mc; gc.collect()
+final["cavg"] = sum(rankdata(final[f"stack_c{c}"]) for c in CS)/NTE
+for k, v in final.items(): pd.DataFrame({"id": test["id"], TARGET: rankdata(v)/NTE}).to_csv(f"submission_{k}.csv", index=False)
+pd.DataFrame({"id": test["id"], TARGET: rankdata(final[WINNER])/NTE}).to_csv("submission.csv", index=False)
+coef = pd.Series(m.coef_[0], index=MEMBERS).sort_values(key=abs, ascending=False)
+print(f"winner by nested CV: {WINNER}"); print(); print("stack coefficients, 20 largest by magnitude:"); print(coef.head(20).round(3).to_string())
+pd.DataFrame({"member": MEMBERS, "oof_auc": auc[MEMBERS].values, "stack_coef": m.coef_[0], "refit": [HASREFIT[k] for k in MEMBERS], "source": [SRC[k] for k in MEMBERS]}).to_csv("members.csv", index=False)
+pd.DataFrame({"id": train["id"], TARGET: y, "nested_winner": nested[WINNER]}).to_csv("oof.csv", index=False)
+## MD: ## 5. Results | | nested CV | public LB | |---|---|---| | first pooled stack, 116 members | 0.95188 | 0.95205 | | **version 2, stack_c0.01**, 178 members from 12 sources | **0.95241** | **0.95277**, rank 2 of 900 at submission | | version 2, stack_c0.03 | 0.95239 | 0.95266 | | version 4, cavg, gate 0.008, 205 members from 13 sources | 0.95249 | 0.95271 | | version 4, stack_c0.01 | 0.95249 | 0.95269 | | version 4, stack_c0.014 | 0.95248 | 0.95265 | | version 5, stack_c0.02, gate 0.015, 236 members from 23 sources | 0.95254 | not submitted | | version 6, same pool + megayak's LM, 237 members | 0.95257 | blend with the fusion file: 0.95254 | | version 7, the version-4 pool + megayak's LM only, 204 members | 0.95255 | blend with the fusion file: 0.95262 | | that blend with 20% of the LM at test level, then 0.6/0.4 with goodpjw2008 Part 12 | no CV | 0.95300 | | 0.6 × version 4 cavg + 0.4 × a 114-member fusion file, rank average | no CV | 0.95292 | Version 2, 6 November: 240 members loaded, 205 within 0.004 of the best, 178 after dedupe. Nested CV rose 0.0005 over the first stack, and the board rose 0.0007, the largest single step of the series. The stack coefficients say where it came from: the largest by far (0.44) went to **masayakawamata's GPT-2 target-first** member, then to **sadamtorres'** gradient-boost pairs (0.24, 0.22) and masayakawamata's v10 outputs (0.20). Those are the error kinds the first pool did not have. Hill climbing stayed at 0.95195 because it cannot give a member a negative weight; the logistic stack can, and that is where the gain lives. Version 3 adds masayakawamata's **TabPack** predictions and treats the 0.004 admission gate as a hyperparameter. In version 2 that gate silently excluded the TabPFN pairs, the digit CNN and every member below 0.9476, which are exactly the members whose errors differ most from the trees. Three gates are scored by nested CV, then a finer C grid at the winning gate, and the rank average over the grid, which bags the stacker's own variance. Version 3 ran out of memory in the final fit; version 4 is the same method with the matrices freed and one C fitted at a time. Version 4, 7 November: the gate sweep chose 0.008 (205 members), nested CV 0.95249, +0.00008 over version 2. The public board did not follow: 0.95271 against 0.95277. That is the first time in this series that a nested gain failed to transfer, and the size of the gain says why: 0.00008 is below what a 20% public split can resolve, so the two files are tied on the board and the nested number is the only one that can tell them apart. Version 5 widens the pool to 23 sources (266 members loaded, 236 after dedupe at the 0.015 gate) and reaches nested 0.95254; its coefficients spread thinner across the same families, and a teammate's blend of it with their own stack scored 0.95232, so it was not submitted alone. Version 6 added megayak's finished target-first LM to the version-5 pool: nested 0.95257, the LM taking the second-largest coefficien

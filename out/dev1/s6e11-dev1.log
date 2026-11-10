@@ -1,0 +1,120 @@
+[{"stream_name":"stdout","time":24.604810785,"data":"comp /kaggle/input/competitions/playground-series-s6e11 699960 299984\n"}
+,{"stream_name":"stdout","time":88.793607449,"data":"skip francescoalbanesephd/s6e11-gbdt-v1-0 kaggle-archive/predictions/oof_catboost.parquet AttributeError(\"'int' object has no attribute 'lower'\")\n"}
+,{"stream_name":"stdout","time":89.012969491,"data":"skip francescoalbanesephd/s6e11-gbdt-v1-0 kaggle-archive/predictions/oof_lightgbm.parquet AttributeError(\"'int' object has no attribute 'lower'\")\n"}
+,{"stream_name":"stdout","time":89.144864894,"data":"skip francescoalbanesephd/s6e11-gbdt-v1-0 kaggle-archive/predictions/oof_xgboost.parquet AttributeError(\"'int' object has no attribute 'lower'\")\n"}
+,{"stream_name":"stdout","time":89.320376701,"data":"skip francescoalbanesephd/s6e11-gbdt-v1-0 kaggle-archive/predictions/test_catboost.parquet AttributeError(\"'int' object has no attribute 'lower'\")\n"}
+,{"stream_name":"stdout","time":89.471345876,"data":"skip francescoalbanesephd/s6e11-gbdt-v1-0 kaggle-archive/predictions/test_lightgbm.parquet AttributeError(\"'int' object has no attribute 'lower'\")\n"}
+,{"stream_name":"stdout","time":89.549361541,"data":"skip francescoalbanesephd/s6e11-gbdt-v1-0 kaggle-archive/predictions/test_xgboost.parquet AttributeError(\"'int' object has no attribute 'lower'\")\n"}
+,{"stream_name":"stdout","time":275.103290061,"data":"candidates 1154 sources 49 split_bad {'arizalfirdaus123/s6e11-digit-keys-target-encoding-open-oof', 'chovyxu/pca-fraud-insights', 'lourenswalters/glm-catboost-bag-fraud', 'chovyxu/graphsage-for-fraud-detection-a-visual-guide'} 271s\n"}
+,{"stream_name":"stdout","time":302.020050642,"data":"pairs 392\n"}
+,{"stream_name":"stdout","time":538.612466025,"data":"raw members (699960, 392)\n"}
+,{"stream_name":"stdout","time":556.227122468,"data":"kept 369 552s\n"}
+,{"stream_name":"stdout","time":560.725325896,"data":"                                                            src                                      name       auc      fmin      fmax test  split_ok        co        ct  keep\n"}
+,{"stream_name":"stdout","time":560.725367006,"data":"99       dhananjayk2609/s6e11-fraud-part-4-final-blend-lb-0-952                     oof/18_wide_stack_oof  0.952589  0.948379  0.957349  F+F      True  0.987295  0.990220  True\n"}
+,{"stream_name":"stdout","time":560.725374272,"data":"315               masayakawamata/s6e11-public-stack-v10-outputs                                       oof  0.951532  0.946850  0.956558  F+F      True  0.990704  0.991142  True\n"}
+,{"stream_name":"stdout","time":560.725379739,"data":"314               masayakawamata/s6e11-public-stack-v10-outputs                                       oof  0.951532  0.946850  0.956558  F+F      True  0.990704  0.991142  True\n"}
+,{"stream_name":"stdout","time":560.725385216,"data":"73         masayakawamata/s6e11-oof-stack-cv-0-95152-lb-0-95137                                       oof  0.951520  0.946841  0.956546  F+F      True  0.990816  0.991276  True\n"}
+,{"stream_name":"stdout","time":560.725390605,"data":"72         masayakawamata/s6e11-oof-stack-cv-0-95152-lb-0-95137                                       oof  0.951520  0.946841  0.956546  F+F      True  0.990816  0.991276  True\n"}
+,{"stream_name":"stdout","time":560.725395815,"data":"232                                  goodpjw2008/s6e11-oof-bank                               oof_gb_bag5  0.951506  0.946994  0.956274    F      True  0.992728  0.992818  True\n"}
+,{"stream_name":"stdout","time":560.725400643,"data":"385                              xiao789/s6e11-w8-blend-archive                 blend_archive#oof_gb_bag5  0.951506  0.946994  0.956274    F      True  0.992728  0.992818  True\n"}
+,{"stream_name":"stdout","time":560.725405663,"data":"293                    goodpjw2008/s6e11-fraud-series-artifacts                               gb_bag5_oof  0.951506  0.946994  0.956274    R      True  0.992728  0.992818  True\n"}
+,{"stream_name":"stdout","time":560.725428227,"data":"231                                  goodpjw2008/s6e11-oof-bank                              oof_gb_bag10  0.951496  0.946965  0.956270    F      True  0.992675  0.992861  True\n"}
+,{"stream_name":"stdout","time":560.725432852,"data":"386                              xiao789/s6e11-w8-blend-archive                blend_archive#oof_gb_bag10  0.951496  0.946965  0.956270    F      True  0.992675  0.992861  True\n"}
+,{"stream_name":"stdout","time":560.725439333,"data":"298                    goodpjw2008/s6e11-fraud-series-artifacts                                 gb_s4_oof  0.951483  0.947060  0.956314    R      True  0.991790  0.991581  True\n"}
+,{"stream_name":"stdout","time":560.725443531,"data":"241                                  goodpjw2008/s6e11-oof-bank                              oof_gbx_bag5  0.951458  0.946923  0.956207    F      True  0.992730  0.992616  True\n"}
+,{"stream_name":"stdout","time":560.725447587,"data":"240                                  goodpjw2008/s6e11-oof-bank                              oof_gbx_bag3  0.951419  0.946819  0.956185    F      True  0.992665  0.992464  True\n"}
+,{"stream_name":"stdout","time":560.725451151,"data":"301                    goodpjw2008/s6e11-fraud-series-artifacts                              gbx_bag3_oof  0.951419  0.946819  0.956185    R      True  0.992665  0.992464  True\n"}
+,{"stream_name":"stdout","time":560.725455226,"data":"295                    goodpjw2008/s6e11-fraud-series-artifacts                                 gb_s1_oof  0.951390  0.947013  0.956081    R      True  0.991508  0.992083  True\n"}
+,{"stream_name":"stdout","time":560.725459229,"data":"296                    goodpjw2008/s6e11-fraud-series-artifacts                                 gb_s2_oof  0.951388  0.946766  0.956215    R      True  0.991830  0.992110  True\n"}
+,{"stream_name":"stdout","time":560.725463047,"data":"203                       alexchilton/s6e11-frozen-public-banks                             oof_glm_boost  0.951375  0.946710  0.956126    R      True  0.992080  0.991963  True\n"}
+,{"stream_name":"stdout","time":560.725467159,"data":"294                    goodpjw2008/s6e11-fraud-series-artifacts                                 gb_s0_oof  0.951369  0.946710  0.956120    R      True  0.992033  0.991848  True\n"}
+,{"stream_name":"stdout","time":560.725471267,"data":"297                    goodpjw2008/s6e11-fraud-series-artifacts                                 gb_s3_oof  0.951357  0.946763  0.956202    R      True  0.991526  0.992124  True\n"}
+,{"stream_name":"stdout","time":560.725505885,"data":"233                                  goodpjw2008/s6e11-oof-bank                                 oof_gb_l3  0.951325  0.946671  0.955976    F      True  0.992186  0.992170  True\n"}
+,{"stream_name":"stdout","time":560.725513686,"data":"205                       alexchilton/s6e11-frozen-public-banks                         oof_glm_boost_xgb  0.951323  0.946623  0.956026    R      True  0.992289  0.991864  True\n"}
+,{"stream_name":"stdout","time":560.725518343,"data":"235                                  goodpjw2008/s6e11-oof-bank                              oof_gbc_bag3  0.951258  0.946768  0.956135    F      True  0.992084  0.992800  True\n"}
+,{"stream_name":"stdout","time":560.725523014,"data":"300                    goodpjw2008/s6e11-fraud-series-artifacts                         gbn_bag5_w512_oof  0.951223  0.946761  0.956076    R      True  0.990622  0.990514  True\n"}
+,{"stream_name":"stdout","time":560.725527522,"data":"238                                  goodpjw2008/s6e11-oof-bank                         oof_gbn_bag5_w512  0.951223  0.946761  0.956076    F      True  0.990622  0.990514  True\n"}
+,{"stream_name":"stdout","time":560.725531611,"data":"237                                  goodpjw2008/s6e11-oof-bank                         oof_gbn_bag5_w128  0.951220  0.946735  0.956002    F      True  0.990161  0.989313  True\n"}
+,{"stream_name":"stdout","time":560.725542151,"data":"299                    goodpjw2008/s6e11-fraud-series-artifacts                         gbn_bag5_w128_oof  0.951220  0.946735  0.956002    R      True  0.990161  0.989313  True\n"}
+,{"stream_name":"stdout","time":560.725546394,"data":"234                                  goodpjw2008/s6e11-oof-bank                                oof_gb_ohk  0.951186  0.946596  0.955986    F      True  0.992009  0.991746  True\n"}
+,{"stream_name":"stdout","time":560.72555089,"data":"236                                  goodpjw2008/s6e11-oof-bank                              oof_gbe_bag3  0.951149  0.946494  0.956066    F      True  0.991247  0.991115  True\n"}
+,{"stream_name":"stdout","time":560.725555025,"data":"239                                  goodpjw2008/s6e11-oof-bank                              oof_gbr_bag3  0.951074  0.946629  0.955840    F      True  0.991784  0.992305  True\n"}
+,{"stream_name":"stdout","time":560.725559501,"data":"372                     queyrusi/fraud-shared-digit-cnn-weights                       gen_predictions#oof  0.951073  0.945947  0.955994    F      True  0.993801  0.994802  True\n"}
+,{"stream_name":"stdout","time":560.7255638,"data":"355          mathsonchain/s6e11-fraud-oof-test-17-single-models                               oof_boost_j  0.951026  0.946042  0.956009    F      True  0.994455  0.995679  True\n"}
+,{"stream_name":"stdout","time":560.725567771,"data":"204                       alexchilton/s6e11-frozen-public-banks                         oof_glm_boost_raw  0.951003  0.946575  0.955734    R      True  0.991487  0.992008  True\n"}
+,{"stream_name":"stdout","time":560.725572351,"data":"100     dhananjayk2609/s6e11-fraud-part-3-glm-and-boosted-trees                      oof/14_glm_boost_oof  0.950996  0.946235  0.955897  F+F      True  0.992078  0.993846  True\n"}
+,{"stream_name":"stdout","time":560.725577697,"data":"217             sadamtorres/ps-s6e11-tabpfn-gbdt-oof-test-pairs                        pair_oof_v6_gb_lgb  0.950942  0.945987  0.956099    F      True  0.989059  0.993606  True\n"}
+,{"stream_name":"stdout","time":560.725581711,"data":"388                              xiao789/s6e11-w8-blend-archive               blend_archive#oof_v6_gb_lgb  0.950942  0.945987  0.956099    F      True  0.989059  0.993606  True\n"}
+,{"stream_name":"stdout","time":560.725585807,"data":"390               lucifer19/golden-signal-v5-scored-predictions                challenger_predictions#oof  0.950791  0.945966  0.955645    F      True  0.989117  0.994903  True\n"}
+,{"stream_name":"stdout","time":560.725589839,"data":"356          mathsonchain/s6e11-fraud-oof-test-17-single-models                                 oof_glm_j  0.950774  0.945882  0.955956    F      True  0.992542  0.993490  True\n"}
+,{"stream_name":"stdout","time":560.725593986,"data":"218             sadamtorres/ps-s6e11-tabpfn-gbdt-oof-test-pairs                        pair_oof_v6_gb_xgb  0.950771  0.945857  0.955851    F      True  0.987286  0.992630  True\n"}
+,{"stream_name":"stdout","time":560.725598612,"data":"387                              xiao789/s6e11-w8-blend-archive               blend_archive#oof_v6_gb_xgb  0.950771  0.945857  0.955851    F      True  0.987286  0.992630  True\n"}
+,{"stream_name":"stdout","time":560.725603254,"data":"329                         malyshevdanil/s6e11-pooled-stack-v9   pool_bank#oof#nil_lgb_unified_96key_bag  0.950757  0.945404  0.955645    F      True  0.995667  0.995939  True\n"}
+,{"stream_name":"stdout","time":560.725607843,"data":"326                         malyshevdanil/s6e11-pooled-stack-v9             pool_bank#oof#lazy_xgb_d2_bag  0.950756  0.945575  0.955495    F      True  0.996164  0.996116  True\n"}
+,{"stream_name":"stdout","time":560.725616454,"data":"158         lazyyeou/s6e11-digit-trie-te-joint-glm-nested-stack                      preds/xgb_d2_bag_oof  0.950756  0.945575  0.955495    R      True  0.996164  0.996116  True\n"}
+,{"stream_name":"stdout","time":560.725621051,"data":"332                         malyshevdanil/s6e11-pooled-stack-v9   pool_bank#oof#nil_xgb_unified_96key_bag  0.950742  0.945468  0.955520    F      True  0.996185  0.996211  True\n"}
+,{"stream_name":"stdout","time":560.725625283,"data":"164         lazyyeou/s6e11-digit-trie-te-joint-glm-nested-stack                      preds/xgb_l4_bag_oof  0.950724  0.945370  0.955542    R      True  0.995638  0.995708  True\n"}
+,{"stream_name":"stdout","time":560.72562945,"data":"327                         malyshevdanil/s6e11-pooled-stack-v9             pool_bank#oof#lazy_xgb_l4_bag  0.950724  0.945370  0.955542    F      True  0.995638  0.995708  True\n"}
+,{"stream_name":"stdout","time":560.725634074,"data":"325                         malyshevdanil/s6e11-pooled-stack-v9           pool_bank#oof#lazy_lgb_s100_bag  0.950720  0.945585  0.955493    F      True  0.993950  0.994117  True\n"}
+,{"stream_name":"stdout","time":560.725638344,"data":"152         lazyyeou/s6e11-digit-trie-te-joint-glm-nested-stack                    preds/lgb_s100_bag_oof  0.950720  0.945585  0.955493    R      True  0.993950  0.994117  True\n"}
+,{"stream_name":"stdout","time":560.725642513,"data":"30        bnzn261029/s6e11-pt2-gpu-gbdts-nested-target-encoding                               oof_xgb_glm  0.950717  0.945758  0.955593    F      True  0.992767  0.994665  True\n"}
+,{"stream_name":"stdout","time":560.725646907,"data":"331                         malyshevdanil/s6e11-pooled-stack-v9    pool_bank#oof#nil_lgb_unified_s100_bag  0.950697  0.945477  0.955493    F      True  0.994064  0.994273  True\n"}
+,{"stream_name":"stdout","time":560.72565127,"data":"323                         malyshevdanil/s6e11-pooled-stack-v9             pool_bank#oof#lazy_lgb_l4_bag  0.950686  0.945377  0.955451    F      True  0.995292  0.995671  True\n"}
+,{"stream_name":"stdout","time":560.725656681,"data":"148         lazyyeou/s6e11-digit-trie-te-joint-glm-nested-stack                      preds/lgb_l4_bag_oof  0.950686  0.945377  0.955451    R      True  0.995292  0.995671  True\n"}
+,{"stream_name":"stdout","time":560.72566121,"data":"363          mathsonchain/s6e11-fraud-oof-test-17-single-models                          oof_lgb_glmboost  0.950685  0.945570  0.955665    F      True  0.993051  0.995465  True\n"}
+,{"stream_name":"stdout","time":560.725665235,"data":"150         lazyyeou/s6e11-digit-trie-te-joint-glm-nested-stack                    preds/lgb_s100__s0_oof  0.950668  0.945441  0.955431    R      True  0.992885  0.992514  True\n"}
+,{"stream_name":"stdout","time":560.725669716,"data":"18   arizalfirdaus123/s6e11-digit-keys-target-encoding-open-oof  open_artifacts/oof_predictions:lgb_te100  0.950666  0.945206  0.955320    F     False  0.992262  0.996949  True\n"}
+,{"stream_name":"stdout","time":560.725673868,"data":"12   arizalfirdaus123/s6e11-digit-keys-target-encoding-open-oof                             oof_lgb_te100  0.950666  0.945206  0.955320    F     False  0.992262  0.996949  True\n"}
+,{"stream_name":"stdout","time":560.725677804,"data":"175                           alexchilton/s6e11-oof-predictions                      oof_4188470eded4cdec  0.950656  0.945357  0.955630    F      True  0.997503  0.998207  True\n"}
+,{"stream_name":"stdout","time":560.725682744,"data":"43   alexchilton/credit-card-fraud-lb-0-9524-shallow-tree-stack                      oof_4188470eded4cdec  0.950656  0.945357  0.955630    F      True  0.997503  0.998207  True\n"}
+,{"stream_name":"stdout","time":560.725687241,"data":"265                                  goodpjw2008/s6e11-oof-bank                        oof_lgb_diglead_l3  0.950644  0.945110  0.955556    F      True  0.996001  0.995504  True\n"}
+,{"stream_name":"stdout","time":560.725695613,"data":"96     aphoristicartist/s6e11-fraud-digit-keys-stack-lb-0-95096                     oof_predictions:stack  0.950637  0.944896  0.955670    F      True  0.998194  0.998735  True\n"}
+,{"stream_name":"stdout","time":560.725700251,"data":"145         lazyyeou/s6e11-digit-trie-te-joint-glm-nested-stack                      preds/lgb_l4__s0_oof  0.950630  0.945407  0.955303    R      True  0.993931  0.994456  True\n"}
+,{"stream_name":"stdout","time":560.732823971,"data":"src\n"}
+,{"stream_name":"stdout","time":560.732861008,"data":"goodpjw2008/s6e11-oof-bank                                      70\n"}
+,{"stream_name":"stdout","time":560.732865867,"data":"alexchilton/s6e11-oof-predictions                               36\n"}
+,{"stream_name":"stdout","time":560.732870192,"data":"alexchilton/credit-card-fraud-lb-0-9524-shallow-tree-stack      36\n"}
+,{"stream_name":"stdout","time":560.732874428,"data":"malyshevdanil/s6e11-pooled-stack-v9                             32\n"}
+,{"stream_name":"stdout","time":560.73287895,"data":"goodpjw2008/s6e11-fraud-series-artifacts                        24\n"}
+,{"stream_name":"stdout","time":560.732882978,"data":"lazyyeou/s6e11-digit-trie-te-joint-glm-nested-stack             21\n"}
+,{"stream_name":"stdout","time":560.732887271,"data":"mathsonchain/s6e11-fraud-oof-test-17-single-models              17\n"}
+,{"stream_name":"stdout","time":560.73289099,"data":"arizalfirdaus123/s6e11-digit-keys-target-encoding-open-oof      16\n"}
+,{"stream_name":"stdout","time":560.732895155,"data":"sadamtorres/ps-s6e11-tabpfn-gbdt-oof-test-pairs                 13\n"}
+,{"stream_name":"stdout","time":560.732899268,"data":"aphoristicartist/s6e11-fraud-digit-keys-stack-lb-0-95096        12\n"}
+,{"stream_name":"stdout","time":560.732903675,"data":"bawanthabeliwaththa/fraud-auc-hackathon                         10\n"}
+,{"stream_name":"stdout","time":560.732907242,"data":"sometimessubodh/ps6e11-dataset                                  10\n"}
+,{"stream_name":"stdout","time":560.732911114,"data":"aqibrazadev/playground-s6e11-eda-ensemble-blend-leaderboard      7\n"}
+,{"stream_name":"stdout","time":560.732915531,"data":"masayakawamata/s6e11-integer-and-decimal-parts-0-002-on-xgb      6\n"}
+,{"stream_name":"stdout","time":560.73291964,"data":"kava1/s6e11-predicting-credit-card-fraud-catboost                6\n"}
+,{"stream_name":"stdout","time":560.732923851,"data":"denpugovkin/s6e11-train-verify-submit                            5\n"}
+,{"stream_name":"stdout","time":560.732928156,"data":"bnzn261029/s6e11-pt2-gpu-gbdts-nested-target-encoding            5\n"}
+,{"stream_name":"stdout","time":560.73293197,"data":"xiao789/s6e11-w8-blend-archive                                   5\n"}
+,{"stream_name":"stdout","time":560.732936238,"data":"alexchilton/s6e11-frozen-public-banks                            4\n"}
+,{"stream_name":"stdout","time":560.732940539,"data":"masayakawamata/s6e11-saved-study-records                         3\n"}
+,{"stream_name":"stdout","time":560.732944781,"data":"denpugovkin/s6e11-5-reviews-73-fraud-oof                         3\n"}
+,{"stream_name":"stdout","time":560.732948727,"data":"bnzn261029/s6e11-pt1-eda-synthetic-forensics-baselines           2\n"}
+,{"stream_name":"stdout","time":560.732952393,"data":"liamob96/lightgbm-and-lr-baselines                               2\n"}
+,{"stream_name":"stdout","time":560.732956308,"data":"masayakawamata/s6e11-tabpack-cpu-starter-predictions             2\n"}
+,{"stream_name":"stdout","time":560.732960435,"data":"queyrusi/fraud-shared-digit-cnn-weights                          2\n"}
+,{"stream_name":"stdout","time":560.732982015,"data":"masayakawamata/s6e11-public-stack-v10-outputs                    2\n"}
+,{"stream_name":"stdout","time":560.732986447,"data":"masayakawamata/s6e11-oof-stack-cv-0-95152-lb-0-95137             2\n"}
+,{"stream_name":"stdout","time":560.732990474,"data":"dhananjayk2609/s6e11-fraud-part-3-glm-and-boosted-trees          2\n"}
+,{"stream_name":"stdout","time":560.732994236,"data":"dhananjayk2609/s6e11-fraud-part-2-digits-leak-the-label          2\n"}
+,{"stream_name":"stdout","time":560.732998361,"data":"masayakawamata/s6e11-distillation-adds-no-clear-tree-gain        2\n"}
+,{"stream_name":"stdout","time":560.733004322,"data":"masayakawamata/s6e11-gpt-2-target-first-classifier-cv-0-9500     2\n"}
+,{"stream_name":"stdout","time":560.733008287,"data":"malyshevdanil/s6e11-digit-token-full-refit-artifacts             1\n"}
+,{"stream_name":"stdout","time":560.733012098,"data":"lucifer19/golden-signal-v5-scored-predictions                    1\n"}
+,{"stream_name":"stdout","time":560.733016265,"data":"denpugovkin/s6e11-logreg-baseline                                1\n"}
+,{"stream_name":"stdout","time":560.733020556,"data":"dhananjayk2609/s6e11-fraud-part-4-final-blend-lb-0-952           1\n"}
+,{"stream_name":"stdout","time":560.733024029,"data":"masayakawamata/s6e11-encoded-logistic-matches-a-shallow-tree     1\n"}
+,{"stream_name":"stdout","time":560.733027579,"data":"masayakawamata/s6e11-gpt2-target-first-oof                       1\n"}
+,{"stream_name":"stdout","time":560.733031007,"data":"megayak/s6e11-target-first-lm                                    1\n"}
+,{"stream_name":"stdout","time":560.733034743,"data":"wguesdon/s6e11-tree-ensemble-predictions                         1\n"}
+,{"stream_name":"stdout","time":560.733038955,"data":"done 556s\n"}
+,{"stream_name":"stderr","time":564.49853733,"data":"/usr/local/lib/python3.13/dist-packages/mistune.py:435: SyntaxWarning: invalid escape sequence '\\|'\n"}
+,{"stream_name":"stderr","time":564.498574826,"data":"  cells[i][c] = re.sub('\\\\\\\\\\|', '|', cell)\n"}
+,{"stream_name":"stderr","time":564.919889144,"data":"/usr/local/lib/python3.13/dist-packages/nbconvert/filters/filter_links.py:36: SyntaxWarning: invalid escape sequence '\\_'\n"}
+,{"stream_name":"stderr","time":564.919920231,"data":"  text = re.sub(r'_', '\\_', text) # Escape underscores in display text\n"}
+,{"stream_name":"stderr","time":567.437019255,"data":"[NbConvertApp] Converting notebook __script__.ipynb to html\n"}
+,{"stream_name":"stderr","time":568.79213737,"data":"[NbConvertApp] Writing 344660 bytes to __results__.html\n"}
+]

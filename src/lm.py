@@ -59,7 +59,36 @@ def build():
     col0 = LAB + 3 + len(voc)
     X[:, :, 0] = col0 + np.arange(len(cols))
     y = tr.is_fraud.astype(float).astype(int).values
+    global META
+    META = dict(voc=voc, cols=cols, tk=tk)
     return X, y, len(tr), col0, col0 + len(cols) + 1
+
+
+def gpt2(m, col0, ntok):
+    from transformers import GPT2LMHeadModel
+    sd = GPT2LMHeadModel.from_pretrained('gpt2').state_dict()
+    tk, voc, cols = META['tk'], META['voc'], META['cols']
+    W = sd['transformer.wte.weight']
+    em = lambda t: W[tk.encode(t)].mean(0)
+    with torch.no_grad():
+        for i, b in enumerate(m.b):
+            q = f'transformer.h.{i}.'
+            for a, k in (('n1', 'ln_1'), ('n2', 'ln_2')):
+                getattr(b, a).weight.copy_(sd[q + k + '.weight'])
+                getattr(b, a).bias.copy_(sd[q + k + '.bias'])
+            for mod, k in ((b.qkv, 'attn.c_attn'), (b.o, 'attn.c_proj'), (b.f[0], 'mlp.c_fc'), (b.f[2], 'mlp.c_proj')):
+                mod.weight.copy_(sd[q + k + '.weight'].T)
+                mod.bias.copy_(sd[q + k + '.bias'])
+        m.n.weight.copy_(sd['transformer.ln_f.weight'])
+        m.n.bias.copy_(sd['transformer.ln_f.bias'])
+        m.pe.weight.copy_(sd['transformer.wpe.weight'][:m.pe.weight.shape[0]])
+        e = m.e.weight
+        e[PAD], e[END], e[LAB], e[LAB + 1], e[LAB + 2] = W.mean(0), W[11], em(' False'), em(' True'), W[50256]
+        for q, i in voc.items():
+            e[i] = W[tk.convert_tokens_to_ids(q)] if '=' not in q else em(' ' + q.split('=', 1)[1])
+        for j, c in enumerate(cols):
+            e[col0 + j] = em(' ' + c)
+        e[ntok - 1] = em(' is_fraud')
 
 
 class Rows:
@@ -102,7 +131,7 @@ class Blk(nn.Module):
         super().__init__()
         s.n1, s.n2 = nn.LayerNorm(d), nn.LayerNorm(d)
         s.qkv, s.o = nn.Linear(d, 3 * d), nn.Linear(d, d)
-        s.f = nn.Sequential(nn.Linear(d, 4 * d), nn.GELU(), nn.Linear(4 * d, d))
+        s.f = nn.Sequential(nn.Linear(d, 4 * d), nn.GELU(approximate='tanh'), nn.Linear(4 * d, d))
         s.h, s.p, s.dr = h, p, nn.Dropout(p)
 
     def forward(s, x):
@@ -118,13 +147,13 @@ class LM(nn.Module):
         super().__init__()
         s.e, s.pe = nn.Embedding(ntok, d), nn.Embedding(T, d)
         s.b = nn.ModuleList(Blk(d, h, p) for _ in range(L))
-        s.n, s.hd, s.dr = nn.LayerNorm(d), nn.Linear(d, nout, bias=False), nn.Dropout(p)
+        s.n, s.dr, s.nout = nn.LayerNorm(d), nn.Dropout(p), nout
 
     def forward(s, x):
         h = s.dr(s.e(x) + s.pe.weight[:x.shape[1]])
         for b in s.b:
             h = b(h)
-        return s.hd(s.n(h)).float()
+        return F.linear(s.n(h), s.e.weight[:s.nout]).float()
 
 
 def train(m, R, y, rows, ep, bs, lr, seed, log, cb=None):
@@ -238,7 +267,10 @@ def main():
         if nval:
             b = np.r_[b[y[b] == 1], rs.choice(b[y[b] == 0], nval, replace=False)]
         torch.manual_seed(seed * 10 + f)
-        m = LM(ntok, col0, d, L, h, p).to(DEV)
+        m = LM(ntok, col0, d, L, h, p)
+        if E('PRE'):
+            gpt2(m, col0, ntok)
+        m = m.to(DEV)
         log(f'fold {f} params {sum(q.numel() for q in m.parameters()) / 1e6:.2f}M train {len(a)}')
         cb = (lambda: f' val {roc_auc_score(y[b], ev(m, R, b, 2, 7)):.5f}') if nval else None
         u = np.setdiff1d(np.arange(len(X)), a)

@@ -1,0 +1,9 @@
+22:19:46 tok bpe ntok 982 d384 L8 h8 p0.1 ep6 bs512 lr0.0007 K4 seed0
+22:19:46 fold 0 params 14.98M train 559968
+22:31:01 ep 1/6 loss 1.2622 10.6m val 0.94001
+22:42:10 ep 2/6 loss 1.1117 21.8m val 0.94193
+22:53:21 ep 3/6 loss 1.1058 32.9m val 0.94461
+23:04:38 ep 4/6 loss 1.1022 44.2m val 0.94607
+23:15:56 ep 5/6 loss 1.0996 55.5m val 0.94705
+23:27:12 ep 6/6 loss 1.0982 66.8m val 0.94698
+23:28:20 fold 0 AUC 0.94692 one-order 0.94651

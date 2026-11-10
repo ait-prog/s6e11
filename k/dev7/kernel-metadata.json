@@ -1,0 +1,16 @@
+{
+ "id": "aitbekovalibek/s6e11-dev7",
+ "title": "s6e11-dev7",
+ "code_file": "run.py",
+ "language": "python",
+ "kernel_type": "script",
+ "is_private": true,
+ "enable_gpu": true,
+ "enable_tpu": false,
+ "enable_internet": true,
+ "dataset_sources": [],
+ "competition_sources": [
+  "playground-series-s6e11"
+ ],
+ "kernel_sources": []
+}

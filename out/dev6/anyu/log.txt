@@ -1,0 +1,9 @@
+22:22:04 mode any fmt fix unl 1.0 tok bpe ntok 983 d384 L8 h8 p0.1 ep6 bs512 lr0.0007 K4 seed0
+22:22:05 fold 0 params 14.98M train 559968
+22:32:49 ep 1/6 loss 1.2441 10.4m val 0.90486
+22:43:34 ep 2/6 loss 1.0927 21.1m val 0.92844
+22:54:19 ep 3/6 loss 1.0867 31.9m val 0.93367
+23:05:05 ep 4/6 loss 1.0832 42.6m val 0.93496
+23:15:52 ep 5/6 loss 1.0807 53.4m val 0.93638
+23:26:41 ep 6/6 loss 1.0793 64.2m val 0.93680
+23:27:14 fold 0 AUC 0.93700 one-order 0.93666
